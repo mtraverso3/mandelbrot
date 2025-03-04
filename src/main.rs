@@ -1,7 +1,5 @@
 use mandelbrot1::generate_mandelbrot_image;
 
-use image_ascii::TextGenerator;
-
 mod mandelbrot1;
 
 fn mandelbrot_locations(name: &str) -> (f64, f64, f64) {
@@ -9,7 +7,7 @@ fn mandelbrot_locations(name: &str) -> (f64, f64, f64) {
         "mini-mandelbrot" => (-1.249559196, 0.030466443, 1.73e6),
         "spiral" => (-1.2494989, 0.0303330, 4.437000e4),
         "quad-spiral" => (-4.621603e-1, -5.823998e-1, 2.633507e7),
-        _ => (-0.75, 0.0, 1.0),
+        "mandelbrot" | _ => (-0.75, 0.0, 1.0),
     }
 }
 
@@ -35,7 +33,6 @@ fn main() {
         .to_rgb8()
         .save("output_resized.png")
         .unwrap();
-
 
     let duration_img = start2.elapsed();
     println!("Mandelbrot image saved in: {:.3?}", duration_img);
