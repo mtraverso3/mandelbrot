@@ -88,10 +88,10 @@ fn mandelbrot_color(c: Complex<f64>, zoom: f64) -> Rgb<u8> {
     let mut z : Complex<f64> = Complex { re: 0.0, im: 0.0 };
     for n in 0..MAX_ITERATIONS {
         let r2  = z.norm_sqr();
-        if r2 > 1000000.0 {
+        if r2 > ESCAPE_RADIUS * ESCAPE_RADIUS {
             let log_zn = r2.ln() * 0.5;
             let nu = (log_zn / 2.0f64.ln()).log2();
-            let iteration = (n as f64 + 1.0 - nu) / zoom.log2();
+            let iteration = (n as f64 + 1.0 - nu) / (zoom + 1.0).log2();
 
             let color1 = get_color(iteration as usize);
             let color2 = get_color(iteration as usize + 1);
