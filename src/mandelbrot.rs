@@ -2,23 +2,23 @@ use image::{Rgb, RgbImage};
 use num::Complex;
 use rayon::prelude::*;
 
-
-
-const MAX_ITERATIONS: usize = 35000;
+const MAX_ITERATIONS: usize = 1500;
 
 const DOWN_SAMPLE_FACTOR: u32 = 2;
 const IMAGE_WIDTH: u32 = 1024 * DOWN_SAMPLE_FACTOR * 2;
 const IMAGE_HEIGHT: u32 = 820 * DOWN_SAMPLE_FACTOR * 2;
 
 // Normal map parameters
-const HEIGHT_FACTOR: f64 = 1.0;  // h2 from wiki
-const LIGHT_ANGLE: f64 = 45.0;   // degrees
+const HEIGHT_FACTOR: f64 = 1.0; // h2 from wiki
+const LIGHT_ANGLE: f64 = 45.0; // degrees
 const ESCAPE_RADIUS: f64 = 100.0;
 
-pub fn generate_mandelbrot_image(center_x: f64, center_y: f64, zoom: f64) -> RgbImage{
-
-    let use_normal_map = true;
-
+pub fn generate_mandelbrot_image(
+    center_x: f64,
+    center_y: f64,
+    zoom: f64,
+    use_normal_map: bool,
+) -> RgbImage {
     let mut img = RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
     let mut rows: Vec<&mut [u8]> = img.as_mut().chunks_mut(IMAGE_WIDTH as usize * 3).collect();
 
@@ -37,7 +37,7 @@ pub fn generate_mandelbrot_image(center_x: f64, center_y: f64, zoom: f64) -> Rgb
                 mandelbrot_color(c, zoom)
             };
             let offset = x * 3;
-            row[offset] = color[0];     // Red
+            row[offset] = color[0]; // Red
             row[offset + 1] = color[1]; // Green
             row[offset + 2] = color[2]; // Blue
         }
@@ -85,9 +85,9 @@ fn get_color(n: usize) -> Rgb<u8> {
 }
 
 fn mandelbrot_color(c: Complex<f64>, zoom: f64) -> Rgb<u8> {
-    let mut z : Complex<f64> = Complex { re: 0.0, im: 0.0 };
+    let mut z: Complex<f64> = Complex { re: 0.0, im: 0.0 };
     for n in 0..MAX_ITERATIONS {
-        let r2  = z.norm_sqr();
+        let r2 = z.norm_sqr();
         if r2 > ESCAPE_RADIUS * ESCAPE_RADIUS {
             let log_zn = r2.ln() * 0.5;
             let nu = (log_zn / 2.0f64.ln()).log2();
@@ -102,7 +102,7 @@ fn mandelbrot_color(c: Complex<f64>, zoom: f64) -> Rgb<u8> {
     Rgb([255, 255, 255])
 }
 
-const AMBIENT_LIGHT: f64 = 0.3;  // Value between 0 and 1 for minimum brightness
+const AMBIENT_LIGHT: f64 = 0.3; // Value between 0 and 1 for minimum brightness
 
 fn mandelbrot_color_with_normal(c: Complex<f64>, zoom: f64, light_v: &Complex<f64>) -> Rgb<u8> {
     let mut z = Complex::new(0.0, 0.0);
@@ -120,7 +120,9 @@ fn mandelbrot_color_with_normal(c: Complex<f64>, zoom: f64, light_v: &Complex<f6
             let t = t / (1.0 + HEIGHT_FACTOR); // Rescale
 
             // Apply ambient light and clamp
-            let light_factor = (t * (1.0 - AMBIENT_LIGHT) + AMBIENT_LIGHT).max(0.0).min(1.0);
+            let light_factor = (t * (1.0 - AMBIENT_LIGHT) + AMBIENT_LIGHT)
+                .max(0.0)
+                .min(1.0);
 
             // Get base color
             let log_zn = r2.ln() * 0.5;
@@ -136,7 +138,7 @@ fn mandelbrot_color_with_normal(c: Complex<f64>, zoom: f64, light_v: &Complex<f6
             return Rgb([
                 ((base_color[0] as f64 * light_factor * brightness_boost) as u32).min(255) as u8,
                 ((base_color[1] as f64 * light_factor * brightness_boost) as u32).min(255) as u8,
-                ((base_color[2] as f64 * light_factor * brightness_boost) as u32).min(255) as u8
+                ((base_color[2] as f64 * light_factor * brightness_boost) as u32).min(255) as u8,
             ]);
         }
 
@@ -153,4 +155,3 @@ fn linear_interpolate(color1: Rgb<u8>, color2: Rgb<u8>, t: f64) -> Rgb<u8> {
     let b = color1[2] as f64 * (1.0 - t) + color2[2] as f64 * t;
     Rgb([r as u8, g as u8, b as u8])
 }
-

@@ -1,8 +1,8 @@
-use mandelbrot1::generate_mandelbrot_image;
+use mandelbrot::generate_mandelbrot_image;
 use clap::{Parser, Args, Subcommand};
 use std::path::PathBuf;
 
-mod mandelbrot1;
+mod mandelbrot;
 
 /// Mandelbrot Set Generator CLI
 #[derive(Parser, Debug)]
