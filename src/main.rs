@@ -34,7 +34,7 @@ enum Commands {
 
 #[derive(Args, Debug)]
 struct PresetArgs {
-    /// Mandelbrot location to generate (mandelbrot, mini-mandelbrot, spiral, quad-spiral)
+    /// Mandelbrot location to generate (mandelbrot, mini-mandelbrot, spirals, quad-spiral)
     #[arg(short, long, default_value = "mandelbrot")]
     location: String,
 
@@ -61,7 +61,7 @@ struct CustomArgs {
 fn mandelbrot_locations(name: &str) -> Result<(f64, f64, f64), &'static str> {
     Ok(match name {
         "mini-mandelbrot" => (-1.249559196, 0.030466443, 1.73e6),
-        "spiral" => (-1.2494989, 0.0303330, 4.437000e4),
+        "spirals" => (-1.2494989, 0.0303330, 7.437000e7),
         "quad-spiral" => (-4.621603e-1, -5.823998e-1, 2.633507e7),
         "mandelbrot" => (-0.75, 0.0, 1.0),
         _ => return Err("Invalid preset location"),

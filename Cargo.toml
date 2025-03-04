@@ -2,6 +2,9 @@
 name = "mandelbrot"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Marcos Traverso"]
+readme = "README.md"
 
 [dependencies]
 image = "0.25.5"
