@@ -136,7 +136,7 @@ impl Stats {
         let mut ms: Vec<f64> = samples.iter().map(|d| d.as_secs_f64() * 1e3).collect();
         ms.sort_by(f64::total_cmp);
         let n = ms.len();
-        let median = if n % 2 == 0 {
+        let median = if n.is_multiple_of(2) {
             (ms[n / 2 - 1] + ms[n / 2]) / 2.0
         } else {
             ms[n / 2]

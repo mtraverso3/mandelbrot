@@ -66,9 +66,16 @@ fn main() {
                 eprintln!("Error: Invalid preset location");
                 std::process::exit(1);
             };
-            Viewport { zoom: base.zoom * args.zoom, ..base }
+            Viewport {
+                zoom: base.zoom * args.zoom,
+                ..base
+            }
         }
-        Commands::Custom(args) => Viewport { center_x: args.x, center_y: args.y, zoom: args.zoom },
+        Commands::Custom(args) => Viewport {
+            center_x: args.x,
+            center_y: args.y,
+            zoom: args.zoom,
+        },
     };
 
     let img = render(&view, &RenderOptions::default());
@@ -94,9 +101,11 @@ fn main() {
         let ext = cli.output.extension().unwrap().to_str().unwrap();
         resized_path.set_file_name(format!("{}_resized.{}", stem, ext));
 
-        resized.save(&resized_path).expect("Failed to save resized image");
+        resized
+            .save(&resized_path)
+            .expect("Failed to save resized image");
     }
-    
+
     if cli.verbose {
         let duration_img = start2.elapsed();
         println!("Mandelbrot image saved in: {:.3?}", duration_img);

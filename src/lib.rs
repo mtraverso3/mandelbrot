@@ -1,6 +1,7 @@
-mod mandelbrot;
+mod color;
+mod render;
 
-pub use mandelbrot::{RenderOptions, Shading, Viewport, downsample, render};
+pub use render::{RenderOptions, Shading, Viewport, downsample, render};
 
 pub const PRESETS: [(&str, Viewport); 4] = [
     (
