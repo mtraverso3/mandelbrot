@@ -265,14 +265,10 @@ impl GpuRenderer {
                 bla_levels: orbit.bla().levels().len() as u32,
                 max_skip_radius_sqr: max_skip_radius_sqr(&orbit),
             };
-            while self.slice(pipeline, &buffers, &params)? > 0 {
+            let size = (rows * width * size_of::<Sample>()) as u64;
+            while self.slice(pipeline, &buffers, &params, size)? > 0 {
                 params.first_slice = 0;
             }
-
-            let size = (rows * width * size_of::<Sample>()) as u64;
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            encoder.copy_buffer_to_buffer(&buffers.samples, 0, &buffers.readback, 0, size);
-            self.queue.submit([encoder.finish()]);
             self.read(&buffers.readback, size, |bytes| {
                 samples.extend_from_slice(bytemuck::cast_slice(bytes))
             })?;
@@ -281,12 +277,14 @@ impl GpuRenderer {
     }
 
     /// Runs up to `slice_steps` steps on every unfinished pixel of the band, returning how
-    /// many pixels are still unfinished.
+    /// many pixels are still unfinished. The samples are copied out every time, so the last
+    /// slice needs no further round trip to the GPU.
     fn slice(
         &self,
         pipeline: &wgpu::ComputePipeline,
         buffers: &Buffers,
         params: &Params,
+        samples_size: u64,
     ) -> Result<u32, GpuError> {
         self.queue
             .write_buffer(&buffers.params, 0, bytemuck::bytes_of(params));
@@ -303,6 +301,7 @@ impl GpuRenderer {
             );
         }
         encoder.copy_buffer_to_buffer(&buffers.unfinished, 0, &buffers.unfinished_readback, 0, 4);
+        encoder.copy_buffer_to_buffer(&buffers.samples, 0, &buffers.readback, 0, samples_size);
         self.queue.submit([encoder.finish()]);
         self.read(&buffers.unfinished_readback, 4, |bytes| {
             bytemuck::pod_read_unaligned(bytes)
