@@ -1,13 +1,11 @@
-use mandelbrot::{
-    Coordinate, MAX_ZOOM, PRESETS, ReferenceOrbit, RenderOptions, Renderer, Shading, Viewport,
-};
+use mandelbrot::{Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Renderer, Shading, Viewport};
 use std::cell::RefCell;
-use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
-    // Every band of a view shares its reference orbit, so each worker keeps the last one.
-    static ORBIT: RefCell<Option<Arc<ReferenceOrbit>>> = const { RefCell::new(None) };
+    // Every band of a view shares its reference orbit and color bands, so each worker keeps
+    // the last renderer to build the next one from.
+    static LAST: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
 
 fn viewport(x: &str, y: &str, zoom: f64) -> Result<Viewport, JsError> {
@@ -47,23 +45,19 @@ pub fn render_rows_rgba(
             Shading::Flat
         },
     };
-    let renderer = ORBIT.with_borrow_mut(|cached| {
-        let renderer = Renderer::reusing(&view, &opts, cached.clone());
-        if let Some(orbit) = renderer.reference_orbit() {
-            *cached = Some(orbit.clone());
-        }
-        renderer
-    });
+    LAST.with_borrow_mut(|last| {
+        let renderer = Renderer::reusing(&view, &opts, last.as_ref());
+        let row_count = row_count.min(height.saturating_sub(first_row));
+        let mut rgb = vec![0; width as usize * row_count as usize * 3];
+        renderer.render_rows(first_row, &mut rgb);
+        *last = Some(renderer);
 
-    let row_count = row_count.min(height.saturating_sub(first_row));
-    let mut rgb = vec![0; width as usize * row_count as usize * 3];
-    renderer.render_rows(first_row, &mut rgb);
-
-    let (pixels, _) = rgb.as_chunks::<3>();
-    Ok(pixels
-        .iter()
-        .flat_map(|&[r, g, b]| [r, g, b, 255])
-        .collect())
+        let (pixels, _) = rgb.as_chunks::<3>();
+        Ok(pixels
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
+            .collect())
+    })
 }
 
 #[wasm_bindgen(js_name = presetNames)]
