@@ -61,8 +61,9 @@ fn render_with<const NORMAL: bool>(view: &Viewport, opts: &RenderOptions) -> Rgb
             for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
                 let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
                 let escapes = escape_lanes::<NORMAL>(&cr, ci, opts.max_iterations);
-                for (pixel, escape) in pixels.chunks_exact_mut(3).zip(&escapes) {
-                    pixel.copy_from_slice(&frame.color::<NORMAL>(escape.as_ref()).0);
+                let (pixels, _) = pixels.as_chunks_mut::<3>();
+                for (pixel, escape) in pixels.iter_mut().zip(&escapes) {
+                    *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
                 }
             }
         });
