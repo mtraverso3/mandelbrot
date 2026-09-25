@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790371052472,
+  "lastUpdate": 1790372418173,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -1160,6 +1160,128 @@ window.BENCHMARK_DATA = {
             "range": "± 0.65",
             "unit": "ms",
             "extra": "1024x820 view, chose 384000 iterations; min 82.48 ms, max 84.50 ms, 12 samples; Intel(R) Xeon(R) 6973P-C"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "016b3b7b52731c3090d38f37bdef6fcf632f64ce",
+          "message": "Render the web viewer on the GPU through WebGPU",
+          "timestamp": "2026-09-25T16:38:12-05:00",
+          "tree_id": "9a6c0385919e1f3a66d59c4193dc201fd9eb9ac9",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/016b3b7b52731c3090d38f37bdef6fcf632f64ce"
+        },
+        "date": 1790372417598,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 44.47,
+            "range": "± 5.17",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 44.01 ms, max 66.25 ms, 22 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 32.77,
+            "range": "± 4.45",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 32.12 ms, max 44.57 ms, 29 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 608.3,
+            "range": "± 1.82",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 604.60 ms, max 608.75 ms, 5 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 438.82,
+            "range": "± 1.59",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 438.15 ms, max 442.18 ms, 5 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 563.98,
+            "range": "± 0.9",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 563.62 ms, max 566.05 ms, 5 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 395.8,
+            "range": "± 1.66",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 391.73 ms, max 396.06 ms, 5 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 101.27,
+            "range": "± 0.23",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 101.12 ms, max 101.99 ms, 10 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 552.49,
+            "range": "± 3.82",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 550.47 ms, max 559.39 ms, 3 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 611.57,
+            "range": "± 2.33",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 610.48 ms, max 615.87 ms, 3 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 129.65,
+            "range": "± 0.94",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 128.46 ms, max 130.67 ms, 8 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 54.61,
+            "range": "± 0.33",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 54.35 ms, max 55.90 ms, 19 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 49.94,
+            "range": "± 0.31",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 49.42 ms, max 50.53 ms, 21 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "auto-iterations/mini-mandelbrot",
+            "value": 31.46,
+            "range": "± 0.41",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 96000 iterations; min 30.86 ms, max 32.80 ms, 32 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          },
+          {
+            "name": "auto-iterations/deep-seahorse",
+            "value": 100.61,
+            "range": "± 1.42",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 384000 iterations; min 99.27 ms, max 104.76 ms, 10 samples; INTEL(R) XEON(R) PLATINUM 8573C"
           }
         ]
       }
