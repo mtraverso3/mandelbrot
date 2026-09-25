@@ -12,8 +12,8 @@ pub use coordinate::{Coordinate, ParseCoordinateError};
 pub use gpu::{GpuError, GpuRenderer};
 pub use perturbation::ReferenceOrbit;
 pub use render::{
-    MAX_AUTO_ITERATIONS, MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport,
-    auto_iterations, render, render_rows,
+    ColorBands, MAX_AUTO_ITERATIONS, MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading,
+    Viewport, auto_iterations, render, render_rows,
 };
 pub use resample::resize_lanczos3;
 

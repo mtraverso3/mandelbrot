@@ -1,4 +1,4 @@
-import init, { autoIterations, renderRows } from './mandelbrot_web.js';
+import init, { autoIterations, lastBands, renderRows } from './mandelbrot_web.js';
 
 const ready = init();
 
@@ -9,11 +9,12 @@ self.onmessage = async ({ data: task }) => {
         self.postMessage({ ...task, iterations: autoIterations(view.x, view.y, view.zoom, width, height) });
         return;
     }
-    const { view, width, height, iterations, normal, firstRow, rowCount } = task;
+    const { view, width, height, iterations, normal, firstRow, rowCount, bands } = task;
     const pixels = renderRows(
         view.x, view.y, view.zoom,
         width, height, iterations, normal,
         firstRow, rowCount,
+        bands?.[0] ?? NaN, bands?.[1] ?? NaN,
     );
-    self.postMessage({ ...task, pixels }, [pixels.buffer]);
+    self.postMessage({ ...task, pixels, bands: Array.from(lastBands()) }, [pixels.buffer]);
 };

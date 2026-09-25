@@ -37,6 +37,9 @@ const state = {
     autoIterations: true,
     shading: 'normal',
     backend: 'gpu',
+    // [scale, phase] of the colors on screen, which the next render carries on from so points
+    // keep their colors while zooming; null to choose them afresh
+    bands: null,
     historyIndex: 0,
     historyLength: 1,
 };
@@ -133,6 +136,7 @@ function bandTasks(pass, width, height) {
             height,
             iterations: state.iterations,
             normal: state.shading === 'normal',
+            bands: job.bands,
             firstRow,
             rowCount: Math.min(rowsPerBand, height - firstRow),
         });
@@ -225,6 +229,7 @@ function startJob(fields, passes) {
     const last = passes[passes.length - 1];
     job = {
         view: state.view,
+        bands: state.bands,
         ...fields,
         started: performance.now(),
         onGpu: usesGpu(),
@@ -244,6 +249,7 @@ function dispatchJob() {
             view: job.view,
             iterations: state.iterations,
             normal: state.shading === 'normal',
+            bands: job.bands,
             passes: job.passes,
         });
     } else {
@@ -262,7 +268,7 @@ function onBand(worker, band) {
     dispatch();
 }
 
-function drawBand({ pass, pixels, width, firstRow, rowCount }) {
+function drawBand({ pass, pixels, width, firstRow, rowCount, bands }) {
     const image = new ImageData(new Uint8ClampedArray(pixels.buffer), width, rowCount);
     if (pass === 'preview') {
         job.preview.getContext('2d').putImageData(image, 0, firstRow);
@@ -284,6 +290,7 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
             keepRendered(state.view);
             lastRenderSeconds = job.elapsed / 1000;
         }
+        if (pass === 'full' || pass === 'keyframe') state.bands = bands;
         if (pass === 'export') finishExport();
         if (pass === 'keyframe') job.resolve({ canvas: job.target, view: job.view });
     }
@@ -645,6 +652,7 @@ function setupControls() {
 
     presetSelect.addEventListener('change', () => {
         state.preset = presetSelect.value;
+        state.bands = null;
         navigate(presetFor(state.preset));
     });
     $('shading').addEventListener('change', (event) => {
@@ -674,7 +682,10 @@ function setupControls() {
     $('back').addEventListener('click', () => history.back());
     $('forward').addEventListener('click', () => history.forward());
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
-    $('reset').addEventListener('click', () => navigate(presetFor(state.preset)));
+    $('reset').addEventListener('click', () => {
+        state.bands = null;
+        navigate(presetFor(state.preset));
+    });
     $('download').addEventListener('click', () => exportImage(Number($('export-scale').value)));
     $('autozoom').addEventListener('click', toggleAutoZoom);
 
@@ -879,6 +890,7 @@ function setupKeyboard() {
         } else if (event.key === '-' || event.key === '_') {
             navigate(zoomAt(width / 2, height / 2, 1 / CLICK_ZOOM), { push });
         } else if (event.key === 'r' || event.key === 'R') {
+            state.bands = null;
             navigate(presetFor(state.preset));
         } else if (event.key === ' ') {
             toggleAutoZoom();

@@ -1,7 +1,9 @@
 #[cfg(target_arch = "wasm32")]
 mod gpu;
 
-use mandelbrot::{Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Renderer, Shading, Viewport};
+use mandelbrot::{
+    ColorBands, Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Renderer, Shading, Viewport,
+};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
@@ -31,6 +33,11 @@ fn options(width: u32, height: u32, max_iterations: u32, normal_shading: bool) -
     }
 }
 
+/// Bands to carry on from, or none (NaN) to choose them afresh.
+fn bands(scale: f64, phase: f64) -> Option<ColorBands> {
+    (!scale.is_nan()).then_some(ColorBands { scale, phase })
+}
+
 fn to_strings(view: &Viewport) -> Vec<String> {
     vec![view.center_x.to_string(), view.center_y.to_string()]
 }
@@ -47,11 +54,14 @@ pub fn render_rows_rgba(
     normal_shading: bool,
     first_row: u32,
     row_count: u32,
+    band_scale: f64,
+    band_phase: f64,
 ) -> Result<Vec<u8>, JsError> {
     let view = viewport(center_x, center_y, zoom)?;
     let opts = options(width, height, max_iterations, normal_shading);
     LAST.with_borrow_mut(|last| {
-        let renderer = Renderer::reusing(&view, &opts, last.as_ref());
+        let renderer =
+            Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase));
         let row_count = row_count.min(height.saturating_sub(first_row));
         let mut rgb = vec![0; width as usize * row_count as usize * 3];
         renderer.render_rows(first_row, &mut rgb);
@@ -62,6 +72,17 @@ pub fn render_rows_rgba(
             .iter()
             .flat_map(|&[r, g, b]| [r, g, b, 255])
             .collect())
+    })
+}
+
+/// `[scale, phase]` of the color bands `renderRows` last used.
+#[wasm_bindgen(js_name = lastBands)]
+pub fn last_bands() -> Vec<f64> {
+    LAST.with_borrow(|last| {
+        last.as_ref().map_or(Vec::new(), |renderer| {
+            let bands = renderer.color_bands();
+            vec![bands.scale, bands.phase]
+        })
     })
 }
 
