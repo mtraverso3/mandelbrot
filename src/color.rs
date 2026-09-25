@@ -35,7 +35,6 @@ pub fn palette(position: f64) -> Rgb<u8> {
     }))
 }
 
-/// Lambert-style shading from the direction of the distance-estimate normal.
 pub fn shade(base: Rgb<u8>, normal: (f64, f64), light: (f64, f64)) -> Rgb<u8> {
     let t = normal.0 * light.0 + normal.1 * light.1 + LIGHT_HEIGHT;
     let t = t / (1.0 + LIGHT_HEIGHT);

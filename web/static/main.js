@@ -32,9 +32,6 @@ function showError(message) {
     error.hidden = false;
 }
 
-// Rendering: bands of rows are farmed out to a pool of workers, each running the wasm renderer.
-// A quarter-resolution preview pass goes first, then full-resolution bands from the center out.
-
 const workers = [];
 const idle = [];
 let queue = [];
@@ -128,9 +125,7 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
     updateStatus();
 }
 
-// Geometry, matching the Rust renderer: pixel (px, py) is center + (p - size / 2) * pixelSize,
-// with the view BASE_VIEW_WIDTH / zoom wide. Centers are exact decimal strings, so all
-// arithmetic on them happens in wasm; offsets from the center always fit in f64.
+// Centers are exact decimal strings, so arithmetic on them happens in wasm
 
 function pixelSize(view) {
     return BASE_VIEW_WIDTH / view.zoom / canvas.width;
@@ -163,7 +158,6 @@ function zoomToRect(px, py, factor) {
     return { x, y, zoom: Math.min(view.zoom * factor, maxZoom()) };
 }
 
-// Redraws the current image as it would appear in `to`, for instant feedback while rendering.
 function reproject(from, to) {
     const { width, height } = canvas;
     snapshot.width = width;
@@ -181,8 +175,6 @@ function reproject(from, to) {
     ctx.imageSmoothingEnabled = ratio > 1;
     ctx.drawImage(snapshot, sx, sy, width * ratio, height * ratio, 0, 0, width, height);
 }
-
-// State, URL and history
 
 function presetFor(name) {
     const view = presetView(name);
@@ -252,8 +244,6 @@ window.addEventListener('popstate', (event) => {
     updateControls();
     render();
 });
-
-// Controls
 
 function formatZoom(zoom) {
     return zoom >= 1e4 ? zoom.toExponential(3) : zoom.toPrecision(4);
@@ -376,9 +366,6 @@ function setupControls() {
         }, WHEEL_SETTLE_MS);
     });
 }
-
-// Pointer interaction: drag a rectangle to zoom into it, click to zoom in, shift+click or
-// right-click to zoom out, scroll to zoom around the cursor.
 
 function selectionRect(start, current) {
     const rect = canvas.getBoundingClientRect();

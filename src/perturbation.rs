@@ -4,11 +4,8 @@ use crate::{Coordinate, Viewport};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
-/// Guard bits beyond the zoom depth, covering image widths up to 2^32 plus rounding slack.
 const GUARD_BITS: u32 = 96;
 
-/// The orbit of the view center, iterated in binary fixed point and stored as `f64`, which
-/// is enough because every point on it stays within the escape radius.
 #[derive(Debug)]
 pub struct ReferenceOrbit {
     center_x: Coordinate,
@@ -20,8 +17,6 @@ pub struct ReferenceOrbit {
     bla: bla::Table,
 }
 
-/// A bound on the distance of any pixel from the center: half the view's diagonal, from its
-/// half-width and half-height.
 fn max_offset(view: &Viewport, aspect: f64) -> f64 {
     BASE_VIEW_WIDTH / view.zoom * (1.0 + aspect) / 2.0
 }
@@ -31,8 +26,6 @@ pub(crate) fn precision_bits(zoom: f64) -> u32 {
 }
 
 impl ReferenceOrbit {
-    /// The orbit of the view center, with iteration skipping valid for images up to `aspect`
-    /// times as tall as they are wide.
     pub fn compute(view: &Viewport, max_iterations: usize, aspect: f64) -> Self {
         let frac_bits = precision_bits(view.zoom);
         let cr = view.center_x.to_fixed(frac_bits);
@@ -68,8 +61,6 @@ impl ReferenceOrbit {
         }
     }
 
-    /// Whether this orbit can serve `view`: same center and iteration limit, enough
-    /// precision for its zoom, and iteration skipping valid over its whole extent.
     pub fn matches(&self, view: &Viewport, max_iterations: usize, aspect: f64) -> bool {
         self.center_x == view.center_x
             && self.center_y == view.center_y
@@ -86,11 +77,6 @@ impl ReferenceOrbit {
         self.points.is_empty()
     }
 
-    /// Iterates the pixel at offset `(dcr, dci)` from the center using perturbation theory:
-    /// only the difference δ from the reference orbit Z is tracked in `f64`, via
-    /// δ' = 2Zδ + δ² + δc. When |Z + δ| < |δ|, or the reference runs out, the pixel is rebased
-    /// onto the start of the orbit (δ := Z + δ), which avoids perturbation glitches with a
-    /// single reference.
     pub(crate) fn escape<const TRACK_DERIVATIVE: bool>(
         &self,
         dcr: f64,
@@ -150,6 +136,7 @@ impl ReferenceOrbit {
                 (der_r, der_i) = (d2r * zr - d2i * zi + 1.0, d2r * zi + d2i * zr);
             }
 
+            // Rebasing onto the start of the orbit avoids glitches with a single reference
             if m == last || norm_sqr < dr * dr + di * di {
                 (dr, di) = (zr, zi);
                 m = 0;
@@ -166,8 +153,7 @@ impl ReferenceOrbit {
     }
 }
 
-/// Scales by a power of two so the largest component is near 1. Only the direction of the
-/// derivative is used, and this keeps its squared norm finite at extreme zooms.
+/// Only the derivative's direction is used; scaling keeps its squared norm finite.
 fn rescale(x: f64, y: f64) -> (f64, f64) {
     let largest = x.abs().max(y.abs());
     if largest == 0.0 || !largest.is_finite() {
@@ -190,7 +176,6 @@ fn fixed_to_f64(value: &BigInt, frac_bits: u32) -> f64 {
 mod tests {
     use super::*;
 
-    /// Escape iteration of `center + (dx, dy)` iterated entirely in binary fixed point.
     fn exact_escape(view: &Viewport, dx: f64, dy: f64, max_iterations: usize) -> Option<usize> {
         let frac_bits = precision_bits(view.zoom) + 64;
         let scale = (view.zoom.log10() as u32) + 40;
@@ -210,9 +195,6 @@ mod tests {
         None
     }
 
-    /// Checks every pixel of a `size` x `size` grid against exact iteration: plain perturbation
-    /// must match exactly, and iteration skipping may change at most `max_skip_mismatches`
-    /// pixels. Also checks the grid is not trivially uniform.
     fn assert_matches_exact(
         view: &Viewport,
         size: usize,
@@ -273,8 +255,7 @@ mod tests {
 
     #[test]
     fn matches_exact_iteration_when_reference_escapes_early() {
-        // Just outside the cusp of the main cardioid, where the reference escapes before the
-        // pixels around it, forcing them to rebase
+        // Just outside the cardioid cusp, the reference escapes first and pixels must rebase
         let view = Viewport {
             center_x: "0.2501".parse().unwrap(),
             center_y: "0".parse().unwrap(),

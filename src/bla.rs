@@ -1,9 +1,6 @@
-//! Bivariate linear approximation: while a pixel's offset δ from the reference orbit Z is tiny
-//! compared to Z, the δ² term of δ' = 2Zδ + δ² + δc is negligible, so a run of iterations
-//! collapses into one linear map δ → Aδ + B·δc. The table holds these maps for blocks of
-//! 1, 2, 4, … iterations, each with the radius R below which dropping δ² stays accurate.
+//! Bivariate linear approximation: while |δ| is below a block's radius, δ² is negligible and
+//! the block's iterations collapse into δ → Aδ + B·δc.
 
-/// Relative size of the dropped δ² term that is still considered negligible.
 const EPSILON: f64 = 1.0 / (1u64 << 24) as f64;
 
 type Complex = (f64, f64);
@@ -17,7 +14,7 @@ pub(crate) struct Step {
 
 #[derive(Debug)]
 pub(crate) struct Table {
-    /// `levels[k][j]` advances `2^k` iterations from reference index `1 + j * 2^k`.
+    // levels[k][j] advances 2^k iterations from reference index 1 + j * 2^k
     levels: Vec<Vec<Step>>,
 }
 
@@ -30,7 +27,6 @@ fn abs(x: Complex) -> f64 {
 }
 
 impl Table {
-    /// Builds the table for `orbit`, valid for pixels at most `max_offset` from its center.
     pub(crate) fn new(orbit: &[Complex], max_offset: f64) -> Self {
         // Z_0 = 0 cannot be skipped over, and the last point may already have escaped
         let single: Vec<Step> = orbit[1..orbit.len().saturating_sub(1).max(1)]
@@ -51,14 +47,11 @@ impl Table {
         Self { levels }
     }
 
-    /// The longest block starting at reference index `m` that is valid for an offset of
-    /// squared size `delta_sqr` and advances at most `budget` iterations. A merged block is
-    /// never valid further out than its first half, so the search climbs from single steps
-    /// and stops at the first level that fails.
     pub(crate) fn lookup(&self, m: usize, delta_sqr: f64, budget: usize) -> Option<(&Step, usize)> {
         let index = m.checked_sub(1)?;
         let aligned = (index.trailing_zeros() as usize).min(self.levels.len() - 1);
         let mut found = None;
+        // A merged block is never valid further out than its first half
         for level in 0..=aligned {
             let length = 1 << level;
             match self.levels[level].get(index >> level) {
@@ -72,7 +65,6 @@ impl Table {
     }
 }
 
-/// The block `x` followed by `y`: valid where `x` is and where `x` lands inside `y`'s radius.
 fn merge(x: &Step, y: &Step, max_offset: f64) -> Step {
     let a = mul(y.a, x.a);
     let b = mul(y.a, x.b);

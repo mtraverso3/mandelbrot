@@ -4,7 +4,7 @@ use std::f32::consts::PI;
 
 const LANCZOS_SUPPORT: f32 = 3.0;
 
-/// Parallel Lanczos3 resize that reproduces `image::imageops::resize` bit for bit.
+/// Reproduces `image::imageops::resize` bit for bit.
 pub fn resize_lanczos3(img: &RgbImage, width: u32, height: u32) -> RgbImage {
     if img.width() == 0 || img.height() == 0 || (width, height) == img.dimensions() {
         let mut out = RgbImage::new(width, height);
