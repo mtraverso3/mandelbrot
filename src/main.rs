@@ -44,7 +44,7 @@ struct Cli {
     #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().shading)]
     shading: Shading,
 
-    /// Render on the GPU, down to zoom 1e30 (requires the `gpu` feature)
+    /// Render on the GPU (requires the `gpu` feature)
     #[arg(long, global = true)]
     gpu: bool,
 }

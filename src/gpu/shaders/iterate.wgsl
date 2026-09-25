@@ -1,5 +1,6 @@
 override SKIP: bool = false;
 override TRACK_DERIVATIVE: bool = false;
+override DEEP: bool = false;
 
 const ESCAPE_RADIUS_SQR: f32 = 10000.0;
 const DERIVATIVE_LIMIT: f32 = 65536.0;
@@ -23,6 +24,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
             vec2(NO_CHECKPOINT),
             vec2(0.0),
             0,
+            select(0, params.pixel_exponent, DEEP),
             0u,
             0u,
             CYCLE_CHECK_START,
@@ -41,6 +43,13 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     for (var step = 0u; step < params.slice_steps && state.n < params.max_iterations; step++) {
+        if DEEP && state.delta_exponent < 0 {
+            state = deep_step(state, index, pixel);
+            if state.done != 0u {
+                break;
+            }
+            continue;
+        }
         var level = -1;
         let delta_sqr = dot(state.delta, state.delta);
         if SKIP && delta_sqr < params.max_skip_radius_sqr {
@@ -60,7 +69,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
 
-        let reference = orbit[state.m];
+        let reference = orbit[state.m].z;
         let z = reference + state.delta;
         let norm_sqr = dot(z, z);
         if norm_sqr > ESCAPE_RADIUS_SQR {
@@ -88,7 +97,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
             state.delta = z;
             state.m = 0u;
         }
-        state.delta = 2.0 * mul(orbit[state.m], state.delta) + mul(state.delta, state.delta) + dc;
+        state.delta = 2.0 * mul(orbit[state.m].z, state.delta) + mul(state.delta, state.delta) + dc;
         state.m++;
         state.n++;
     }

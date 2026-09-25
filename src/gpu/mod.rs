@@ -10,8 +10,9 @@ use buffers::{Buffers, Params, Sample};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-/// Past this, pixel offsets approach the smallest normal f32.
-pub const GPU_MAX_ZOOM: f64 = 1e30;
+/// Past this, pixel offsets approach the smallest normal f32, so they start out with a
+/// separate exponent.
+const DEEP_ZOOM: f64 = 1e30;
 /// Up to here pixels are several f32 steps apart, so testing points against the main cardioid
 /// and bulb in f32 can only misjudge pixels right on their boundary.
 const BULB_CHECK_ZOOM: f64 = 1e3;
@@ -20,6 +21,7 @@ const WORKGROUP_SIZE: u32 = 8;
 const SHADER: &str = concat!(
     include_str!("shaders/bindings.wgsl"),
     include_str!("shaders/iterate.wgsl"),
+    include_str!("shaders/deep.wgsl"),
     include_str!("shaders/color.wgsl"),
 );
 
@@ -42,7 +44,6 @@ pub enum GpuError {
     Device(wgpu::RequestDeviceError),
     Poll(wgpu::PollError),
     Readback(wgpu::BufferAsyncError),
-    ZoomTooDeep(f64),
 }
 
 impl fmt::Display for GpuError {
@@ -52,10 +53,6 @@ impl fmt::Display for GpuError {
             Self::Device(e) => write!(f, "could not open the GPU: {e}"),
             Self::Poll(e) => write!(f, "GPU render failed: {e}"),
             Self::Readback(e) => write!(f, "could not read the GPU render back: {e}"),
-            Self::ZoomTooDeep(zoom) => write!(
-                f,
-                "zoom {zoom:e} is past the GPU's deepest zoom of {GPU_MAX_ZOOM:e}"
-            ),
         }
     }
 }
@@ -67,11 +64,23 @@ impl std::error::Error for GpuError {}
 struct Variant {
     skip: bool,
     track_derivative: bool,
+    deep: bool,
 }
 
 impl Variant {
+    fn new(renderer: &Renderer) -> Self {
+        let zoom = renderer.view().zoom;
+        Self {
+            // As on the CPU, skipped blocks are only long enough to pay for their lookups
+            // once perturbation is needed
+            skip: zoom >= PERTURBATION_ZOOM,
+            track_derivative: renderer.options().shading == Shading::Normal,
+            deep: zoom > DEEP_ZOOM,
+        }
+    }
+
     fn index(self) -> usize {
-        self.skip as usize * 2 + self.track_derivative as usize
+        self.deep as usize * 4 + self.skip as usize * 2 + self.track_derivative as usize
     }
 }
 
@@ -91,7 +100,7 @@ pub struct GpuRenderer {
     bind_group_layout: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     /// Built on first use, indexed by [`Variant::index`].
-    iterate: [OnceLock<wgpu::ComputePipeline>; 4],
+    iterate: [OnceLock<wgpu::ComputePipeline>; 8],
     color: wgpu::ComputePipeline,
     adapter_name: String,
 }
@@ -172,6 +181,7 @@ impl GpuRenderer {
             let constants = [
                 ("SKIP", variant.skip as u8 as f64),
                 ("TRACK_DERIVATIVE", variant.track_derivative as u8 as f64),
+                ("DEEP", variant.deep as u8 as f64),
             ];
             compute_pipeline(
                 &self.device,
@@ -222,6 +232,7 @@ impl GpuRenderer {
     ) -> Result<bool, GpuError> {
         self.run(
             renderer,
+            Variant::new(renderer),
             CHUNKING,
             Output::Rgba,
             &cancelled,
@@ -233,15 +244,13 @@ impl GpuRenderer {
     async fn run(
         &self,
         renderer: &Renderer,
+        variant: Variant,
         chunking: Chunking,
         output: Output,
         cancelled: &dyn Fn() -> bool,
         on_rows: &mut dyn FnMut(u32, &[u8]),
     ) -> Result<bool, GpuError> {
         let view = renderer.view();
-        if view.zoom > GPU_MAX_ZOOM {
-            return Err(GpuError::ZoomTooDeep(view.zoom));
-        }
         let opts = renderer.options();
         let (width, height) = (opts.width as usize, opts.height as usize);
         if width == 0 || height == 0 {
@@ -255,12 +264,7 @@ impl GpuRenderer {
                 height as f64 / width as f64,
             )),
         };
-        let iterate = self.iterate_pipeline(Variant {
-            // As on the CPU, skipped blocks are only long enough to pay for their lookups once
-            // perturbation is needed
-            skip: view.zoom >= PERTURBATION_ZOOM,
-            track_derivative: opts.shading == Shading::Normal,
-        });
+        let iterate = self.iterate_pipeline(variant);
         let band_rows = (chunking.band_pixels / width).clamp(1, height);
         let buffers = Buffers::new(self, &orbit, band_rows * width);
         let mut params = Params::new(renderer, &orbit, chunking.slice_steps);

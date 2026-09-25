@@ -230,7 +230,7 @@ fn scenarios() -> Vec<Scenario> {
     list
 }
 
-/// Full-resolution presets, plus the CPU's deep seahorse scenario for direct comparison.
+/// Full-resolution presets, plus the CPU's deep scenarios for direct comparison.
 #[cfg(feature = "gpu")]
 fn gpu_scenarios() -> Vec<Scenario> {
     let full_res = |max_iterations| RenderOptions {
@@ -260,6 +260,20 @@ fn gpu_scenarios() -> Vec<Scenario> {
             full_res(96000),
         ),
         ("deep-seahorse/normal", deep_seahorse(), deep),
+        (
+            "misiurewicz-1e100/normal",
+            Viewport {
+                center_x: "0".parse().unwrap(),
+                center_y: "1".parse().unwrap(),
+                zoom: 1e100,
+            },
+            RenderOptions {
+                width: BENCH_SIZE.0,
+                height: BENCH_SIZE.1,
+                max_iterations: 3000,
+                shading: Shading::Normal,
+            },
+        ),
     ]
     .into_iter()
     .map(|(name, view, opts)| Scenario {

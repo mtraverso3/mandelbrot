@@ -17,7 +17,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 - Adjustable zoom, down to 10²⁵⁰ using perturbation theory past the limits of 64-bit floats
 - Optional image antialiasing
 - Configurable resolution, iteration count and shading
-- GPU rendering with wgpu, natively and through WebGPU in the browser, down to 10³⁰
+- GPU rendering with wgpu, natively and through WebGPU in the browser, at every zoom
 - Timing information
 
 ## Installation
@@ -46,7 +46,7 @@ Options:
       --height <HEIGHT>          Image height in pixels [default: 3280]
       --iterations <ITERATIONS>  Maximum iterations per pixel, or "auto" to pick one from the view [default: 1500]
       --shading <SHADING>        Shading mode [default: normal] [possible values: flat, normal]
-      --gpu                      Render on the GPU, down to zoom 1e30 (requires the `gpu` feature)
+      --gpu                      Render on the GPU (requires the `gpu` feature)
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -83,14 +83,15 @@ The CPU computes the high-precision reference orbit, its series approximation ta
 color bands; the GPU iterates every pixel's offset from that orbit in 32-bit floats, skipping
 iterations with the table and stopping early on periodic interior points, then colors them.
 Long renders run as a series of short dispatches, so the OS never resets the GPU mid-render.
-Images match the CPU renderer apart from pixel noise in chaotic regions. It reaches zoom 10³⁰,
-where offsets approach the f32 range.
+Past zoom 10³⁰, where offsets start below the f32 range, they are carried with a separate
+exponent until they grow back into it, so the GPU reaches the same 10²⁵⁰ as the CPU. Images match
+the CPU renderer apart from pixel noise in chaotic regions.
 
 
 ## Web Viewer
 An interactive version runs in the browser at [mandelbrot.mtraverso.net](https://mandelbrot.mtraverso.net).
 It uses the same renderer compiled to WebAssembly: on the GPU through WebGPU where the browser
-supports it and the zoom is within 10³⁰, and otherwise split across one Web Worker per CPU core.
+supports it, and otherwise split across one Web Worker per CPU core.
 Pick a preset, drag a rectangle to zoom into it, click or scroll to zoom, and share the URL to share the view.
 Arrow keys pan and `+`/`−` zoom; on touch screens, drag to pan and pinch to zoom. Download PNG renders
 the view at up to 8× the screen resolution.

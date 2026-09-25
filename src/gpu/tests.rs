@@ -1,10 +1,16 @@
 use super::*;
 use crate::{RenderOptions, Viewport, preset, render};
 
-fn samples(gpu: &GpuRenderer, renderer: &Renderer, chunking: Chunking) -> Vec<Sample> {
+fn samples(
+    gpu: &GpuRenderer,
+    renderer: &Renderer,
+    variant: Variant,
+    chunking: Chunking,
+) -> Vec<Sample> {
     let mut samples = Vec::new();
     let finished = pollster::block_on(gpu.run(
         renderer,
+        variant,
         chunking,
         Output::Samples,
         &|| false,
@@ -14,8 +20,8 @@ fn samples(gpu: &GpuRenderer, renderer: &Renderer, chunking: Chunking) -> Vec<Sa
     samples
 }
 
-fn escapes(gpu: &GpuRenderer, renderer: &Renderer, chunking: Chunking) -> Vec<Option<usize>> {
-    samples(gpu, renderer, chunking)
+fn escapes(gpu: &GpuRenderer, renderer: &Renderer, variant: Variant) -> Vec<Option<usize>> {
+    samples(gpu, renderer, variant, CHUNKING)
         .iter()
         .map(|s| (s.iterations != u32::MAX).then_some(s.iterations as usize))
         .collect()
@@ -38,6 +44,20 @@ fn exact_escapes(renderer: &Renderer) -> Vec<Option<usize>> {
 /// f32 rounding reshuffles iteration counts in chaotic texture, and can flip pixels that
 /// escape right at the iteration limit, but must not change what is inside the set.
 fn assert_close_to_exact(view: Viewport, max_iterations: usize, max_mismatch: f64) {
+    assert_variant_close_to_exact(view, max_iterations, max_mismatch, false);
+}
+
+/// The same with offsets starting out with a separate exponent, whatever the zoom.
+fn assert_deep_close_to_exact(view: Viewport, max_iterations: usize, max_mismatch: f64) {
+    assert_variant_close_to_exact(view, max_iterations, max_mismatch, true);
+}
+
+fn assert_variant_close_to_exact(
+    view: Viewport,
+    max_iterations: usize,
+    max_mismatch: f64,
+    force_deep: bool,
+) {
     let gpu = GpuRenderer::new().unwrap();
     let opts = RenderOptions {
         width: 96,
@@ -46,7 +66,9 @@ fn assert_close_to_exact(view: Viewport, max_iterations: usize, max_mismatch: f6
         shading: Shading::Normal,
     };
     let renderer = Renderer::new(&view, &opts);
-    let actual = escapes(&gpu, &renderer, CHUNKING);
+    let mut variant = Variant::new(&renderer);
+    variant.deep |= force_deep;
+    let actual = escapes(&gpu, &renderer, variant);
     let expected = exact_escapes(&renderer);
     assert!(
         expected.iter().any(|e| *e != expected[0]),
@@ -56,8 +78,9 @@ fn assert_close_to_exact(view: Viewport, max_iterations: usize, max_mismatch: f6
     let flipped = pairs().filter(|(a, e)| a.is_some() != e.is_some()).count();
     let mismatches = pairs().filter(|(a, e)| a != e).count();
     eprintln!(
-        "zoom {:e}: {mismatches}/{} differ, {flipped} flipped",
+        "zoom {:e}{}: {mismatches}/{} differ, {flipped} flipped",
         view.zoom,
+        if variant.deep { " (deep)" } else { "" },
         expected.len()
     );
     let pixels = expected.len() as f64;
@@ -106,13 +129,8 @@ fn close_to_exact_when_skipping_at_deep_zoom() {
 }
 
 #[test]
-fn close_to_exact_at_deepest_zoom() {
-    let view = Viewport {
-        center_x: "0".parse().unwrap(),
-        center_y: "1".parse().unwrap(),
-        zoom: GPU_MAX_ZOOM,
-    };
-    assert_close_to_exact(view, 3000, 0.01);
+fn close_to_exact_at_the_edge_of_f32_range() {
+    assert_close_to_exact(misiurewicz_i(DEEP_ZOOM), 3000, 0.01);
 }
 
 #[test]
@@ -133,9 +151,10 @@ fn bands_and_slices_match_a_single_dispatch() {
         band_pixels: 37 * 5,
         slice_steps: 7,
     };
+    let variant = Variant::new(&renderer);
     let (whole, split) = (
-        samples(&gpu, &renderer, whole),
-        samples(&gpu, &renderer, split),
+        samples(&gpu, &renderer, variant, whole),
+        samples(&gpu, &renderer, variant, split),
     );
     assert_eq!(
         bytemuck::cast_slice::<_, u8>(&whole),
@@ -143,12 +162,58 @@ fn bands_and_slices_match_a_single_dispatch() {
     );
 }
 
+fn misiurewicz_i(zoom: f64) -> Viewport {
+    Viewport {
+        center_x: "0".parse().unwrap(),
+        center_y: "1".parse().unwrap(),
+        zoom,
+    }
+}
+
+// The real nucleus of the period 3 minibrot, where the reference orbit falls to about 1e-80
+// every third iteration
+const PERIOD_3_NUCLEUS: &str =
+    "-1.7548776662466927600495088963585286918946066177727931439892839706460806551280810";
+
 #[test]
-fn rejects_zoom_past_f32_range() {
+fn close_to_exact_past_f32_range() {
+    for zoom in [1e40, 1e100, 1e200, crate::MAX_ZOOM] {
+        assert_close_to_exact(misiurewicz_i(zoom), 3000, 0.01);
+    }
+}
+
+#[test]
+fn deep_path_close_to_exact_at_shallow_zoom() {
+    assert_deep_close_to_exact(preset("mandelbrot").unwrap(), 1500, 0.01);
+    assert_deep_close_to_exact(preset("spirals").unwrap(), 6000, 0.25);
+    assert_deep_close_to_exact(Viewport::from_f64(0.2501, 0.0, 1e3), 2000, 0.01);
+    assert_deep_close_to_exact(misiurewicz_i(1e20), 3000, 0.01);
+    let nucleus = Viewport {
+        center_x: PERIOD_3_NUCLEUS.parse().unwrap(),
+        center_y: "0".parse().unwrap(),
+        zoom: 40.0,
+    };
+    assert_deep_close_to_exact(nucleus, 3000, 0.01);
+}
+
+#[test]
+fn deep_view_inside_a_minibrot_stays_interior() {
     let gpu = GpuRenderer::new().unwrap();
-    let view = Viewport::from_f64(0.0, 1.0, GPU_MAX_ZOOM * 10.0);
-    let result = gpu.render(&view, &RenderOptions::default());
-    assert!(matches!(result, Err(GpuError::ZoomTooDeep(_))));
+    let view = Viewport {
+        center_x: PERIOD_3_NUCLEUS.parse().unwrap(),
+        center_y: format!("0.{}1", "0".repeat(44)).parse().unwrap(),
+        zoom: 1e40,
+    };
+    let opts = RenderOptions {
+        width: 32,
+        height: 24,
+        max_iterations: 3000,
+        shading: Shading::Normal,
+    };
+    let renderer = Renderer::new(&view, &opts);
+    assert!(exact_escapes(&renderer).iter().all(Option::is_none));
+    let escaped = escapes(&gpu, &renderer, Variant::new(&renderer));
+    assert!(escaped.iter().all(Option::is_none), "{escaped:?}");
 }
 
 #[test]
@@ -162,7 +227,8 @@ fn shading_does_not_change_escapes() {
                 max_iterations: 4000,
                 shading,
             };
-            escapes(&gpu, &Renderer::new(&view, &opts), CHUNKING)
+            let renderer = Renderer::new(&view, &opts);
+            escapes(&gpu, &renderer, Variant::new(&renderer))
         });
         assert_eq!(normal, flat, "zoom {:e}", view.zoom);
     }
