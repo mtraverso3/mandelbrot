@@ -6,6 +6,9 @@ license = "MIT"
 authors = ["Marcos Traverso"]
 readme = "README.md"
 
+[workspace]
+members = ["web"]
+
 [features]
 default = ["cli"]
 cli = ["dep:clap", "image/default"]
@@ -27,3 +30,9 @@ required-features = ["cli"]
 [[bench]]
 name = "render"
 harness = false
+
+[profile.wasm-release]
+inherits = "release"
+lto = true
+codegen-units = 1
+panic = "abort"

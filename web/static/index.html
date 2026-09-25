@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mandelbrot Explorer</title>
+    <meta name="description" content="Explore the Mandelbrot set in your browser, rendered with Rust and WebAssembly.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='9' cy='8' r='5' fill='%23f8c95f'/><circle cx='3.5' cy='8' r='2' fill='%23397dd1'/></svg>">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <canvas id="view" aria-label="Mandelbrot set view"></canvas>
+    <div id="selection" hidden></div>
+
+    <aside id="panel">
+        <header>
+            <h1>Mandelbrot Explorer</h1>
+            <button id="toggle-panel" type="button" aria-expanded="true" aria-controls="panel-body" title="Hide controls">–</button>
+        </header>
+        <div id="panel-body">
+            <label>Location
+                <select id="preset"></select>
+            </label>
+            <label>Shading
+                <select id="shading">
+                    <option value="normal">Normal map</option>
+                    <option value="flat">Flat</option>
+                </select>
+            </label>
+            <label>Max iterations
+                <input id="iterations" type="number" min="50" max="100000" step="50" value="1500">
+            </label>
+            <label>Resolution
+                <select id="resolution">
+                    <option value="0.5">Low</option>
+                    <option value="1">Standard</option>
+                    <option value="device" selected>Sharp</option>
+                </select>
+            </label>
+            <div class="buttons">
+                <button id="back" type="button" title="Previous view">← Back</button>
+                <button id="forward" type="button" title="Next view">Forward →</button>
+                <button id="zoom-out" type="button" title="Zoom out 2×">Zoom out</button>
+                <button id="reset" type="button" title="Back to the preset">Reset</button>
+                <button id="download" type="button" title="Save the current view as PNG">Download PNG</button>
+            </div>
+            <dl id="info">
+                <dt>Center</dt><dd id="center"></dd>
+                <dt>Zoom</dt><dd id="zoom"></dd>
+                <dt>Render</dt><dd id="status"></dd>
+            </dl>
+            <p id="precision-warning" hidden>Past about 10¹³ zoom, 64-bit floats run out of precision and the image turns blocky.</p>
+            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom</p>
+        </div>
+    </aside>
+
+    <div class="links">
+        <a href="https://github.com/mtraverso3/mandelbrot" target="_blank" rel="noopener">Source Code</a>
+        <a href="https://mtraverso.net" target="_blank" rel="noopener">mtraverso.net</a>
+    </div>
+
+    <p id="error" hidden></p>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
