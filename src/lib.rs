@@ -1,7 +1,13 @@
 mod color;
 mod render;
+mod resample;
 
-pub use render::{RenderOptions, Shading, Viewport, downsample, render};
+pub use render::{RenderOptions, Shading, Viewport, render};
+pub use resample::resize_lanczos3;
+
+pub fn downsample(img: &image::RgbImage) -> image::RgbImage {
+    resize_lanczos3(img, img.width() / 2, img.height() / 2)
+}
 
 pub const PRESETS: [(&str, Viewport); 4] = [
     (

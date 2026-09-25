@@ -274,15 +274,6 @@ fn in_main_cardioid_or_bulb(cr: f64, ci: f64) -> bool {
     in_cardioid || in_period2_bulb
 }
 
-pub fn downsample(img: &RgbImage) -> RgbImage {
-    image::imageops::resize(
-        img,
-        img.width() / 2,
-        img.height() / 2,
-        image::imageops::FilterType::Lanczos3,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
