@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790372418173,
+  "lastUpdate": 1790373692134,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -1282,6 +1282,128 @@ window.BENCHMARK_DATA = {
             "range": "± 1.42",
             "unit": "ms",
             "extra": "1024x820 view, chose 384000 iterations; min 99.27 ms, max 104.76 ms, 10 samples; INTEL(R) XEON(R) PLATINUM 8573C"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "156616ed47a91194e0b99ca2c62ba1ac60224fd2",
+          "message": "Add touch gestures, keyboard controls and high-resolution export",
+          "timestamp": "2026-09-25T16:59:30-05:00",
+          "tree_id": "c6780278bfd393841fbbad9f0fb64f15e57956ec",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/156616ed47a91194e0b99ca2c62ba1ac60224fd2"
+        },
+        "date": 1790373690952,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 66.57,
+            "range": "± 3.04",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 65.81 ms, max 75.24 ms, 15 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 46.65,
+            "range": "± 1.59",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 46.52 ms, max 53.98 ms, 22 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 976.03,
+            "range": "± 36.13",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 973.47 ms, max 1065.84 ms, 5 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 694.87,
+            "range": "± 2.32",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 693.40 ms, max 700.16 ms, 5 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 906.75,
+            "range": "± 1.99",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 905.80 ms, max 910.55 ms, 5 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 625.48,
+            "range": "± 7.32",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 618.95 ms, max 636.82 ms, 5 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 125.73,
+            "range": "± 0.06",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 125.67 ms, max 125.90 ms, 8 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 823.88,
+            "range": "± 3.88",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 816.18 ms, max 824.86 ms, 3 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 768.59,
+            "range": "± 3.57",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 768.23 ms, max 775.97 ms, 3 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 166.78,
+            "range": "± 1.23",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 165.10 ms, max 168.96 ms, 6 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 61.11,
+            "range": "± 0.48",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 60.98 ms, max 62.94 ms, 17 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 71.75,
+            "range": "± 1.97",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 71.07 ms, max 79.21 ms, 14 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "auto-iterations/mini-mandelbrot",
+            "value": 35.54,
+            "range": "± 0.72",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 96000 iterations; min 34.92 ms, max 37.23 ms, 28 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
+          },
+          {
+            "name": "auto-iterations/deep-seahorse",
+            "value": 128.08,
+            "range": "± 2.45",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 384000 iterations; min 126.56 ms, max 133.60 ms, 8 samples; Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz"
           }
         ]
       }
