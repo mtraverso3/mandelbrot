@@ -12,6 +12,7 @@ members = ["web"]
 [features]
 default = ["cli"]
 cli = ["dep:clap", "image/default"]
+gpu = ["dep:wgpu", "dep:pollster", "dep:bytemuck"]
 
 [dependencies]
 image = { version = "0.25.5", default-features = false }
@@ -20,6 +21,9 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 clap = { version = "4.5.31", features = ["derive"], optional = true }
+wgpu = { version = "30", optional = true }
+pollster = { version = "1", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 image = { version = "0.25.5", default-features = false, features = ["png"] }

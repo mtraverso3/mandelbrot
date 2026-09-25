@@ -79,6 +79,11 @@ impl ReferenceOrbit {
         self.points.is_empty()
     }
 
+    #[cfg(feature = "gpu")]
+    pub(crate) fn points(&self) -> &[(f64, f64)] {
+        &self.points
+    }
+
     pub(crate) fn escape<const TRACK_DERIVATIVE: bool>(
         &self,
         dcr: f64,
@@ -87,6 +92,19 @@ impl ReferenceOrbit {
     ) -> Option<Escape> {
         match self.iterate::<TRACK_DERIVATIVE, true, false>(dcr, dci, max_iterations) {
             Outcome::Escaped(escape) => Some(escape),
+            _ => None,
+        }
+    }
+
+    #[cfg(all(test, feature = "gpu"))]
+    pub(crate) fn escape_unskipped(
+        &self,
+        dcr: f64,
+        dci: f64,
+        max_iterations: usize,
+    ) -> Option<usize> {
+        match self.iterate::<false, false, false>(dcr, dci, max_iterations) {
+            Outcome::Escaped(escape) => Some(escape.iterations),
             _ => None,
         }
     }

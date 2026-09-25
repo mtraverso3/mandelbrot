@@ -1,11 +1,15 @@
 mod bla;
 mod color;
 mod coordinate;
+#[cfg(feature = "gpu")]
+mod gpu;
 mod perturbation;
 mod render;
 mod resample;
 
 pub use coordinate::{Coordinate, ParseCoordinateError};
+#[cfg(feature = "gpu")]
+pub use gpu::{GPU_MAX_ZOOM, GpuError, GpuRenderer};
 pub use perturbation::ReferenceOrbit;
 pub use render::{
     MAX_AUTO_ITERATIONS, MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport,

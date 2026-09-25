@@ -17,6 +17,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 - Adjustable zoom, down to 10²⁵⁰ using perturbation theory past the limits of 64-bit floats
 - Optional image antialiasing
 - Configurable resolution, iteration count and shading
+- Experimental GPU rendering (wgpu), down to 10³⁰
 - Timing information
 
 ## Installation
@@ -45,6 +46,7 @@ Options:
       --height <HEIGHT>          Image height in pixels [default: 3280]
       --iterations <ITERATIONS>  Maximum iterations per pixel, or "auto" to pick one from the view [default: 1500]
       --shading <SHADING>        Shading mode [default: normal] [possible values: flat, normal]
+      --gpu                      Render on the GPU, down to zoom 1e30 (requires the `gpu` feature)
   -h, --help                     Print help
   -V, --version                  Print version
 ```
@@ -68,6 +70,19 @@ mandelbrot custom -x -1.24949889563508492587065068503213228909045011806661 \
 # Quick, low-resolution preview with flat shading
 mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat
 ```
+
+
+## GPU Rendering (experimental)
+Building with the `gpu` feature adds a [wgpu](https://wgpu.rs) backend (Vulkan, Metal or DX12):
+
+```bash
+cargo run --release --features gpu -- --gpu -v preset -l spirals
+```
+
+The CPU computes the high-precision reference orbit and color bands; the GPU iterates every
+pixel's offset from that orbit in 32-bit floats. Images match the CPU renderer apart from pixel
+noise in chaotic regions. It reaches zoom 10³⁰, where offsets approach the f32 range, and does not
+yet skip iterations with series approximation.
 
 
 ## Web Viewer

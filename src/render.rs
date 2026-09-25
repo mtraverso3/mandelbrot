@@ -293,6 +293,27 @@ impl Renderer {
     }
 }
 
+#[cfg(feature = "gpu")]
+impl Renderer {
+    pub(crate) fn options(&self) -> &RenderOptions {
+        &self.opts
+    }
+
+    pub(crate) fn pixel_size(&self) -> f64 {
+        self.frame.pixel_size
+    }
+
+    /// Colors an escape computed elsewhere, such as on the GPU.
+    pub(crate) fn paint(&self, iterations: usize, norm_sqr: f64, normal: (f64, f64)) -> Rgb<u8> {
+        let smooth = smooth_iterations(iterations, norm_sqr);
+        let base = color::palette(self.frame.smooth_position(smooth));
+        match self.opts.shading {
+            Shading::Flat => base,
+            Shading::Normal => color::shade(base, normal, self.frame.light),
+        }
+    }
+}
+
 struct Frame {
     left: f64,
     top: f64,
@@ -346,7 +367,7 @@ impl Frame {
         let Some(escape) = escape else {
             return INTERIOR;
         };
-        let base = color::palette(self.smooth_position(escape));
+        let base = color::palette(self.smooth_position(escape.smooth_iterations()));
         if NORMAL {
             color::shade(base, escape.normal(), self.light)
         } else {
@@ -354,8 +375,8 @@ impl Frame {
         }
     }
 
-    fn smooth_position(&self, escape: &Escape) -> f64 {
-        escape.smooth_iterations() / self.band_scale + self.band_phase
+    fn smooth_position(&self, smooth_iterations: f64) -> f64 {
+        smooth_iterations / self.band_scale + self.band_phase
     }
 }
 
@@ -373,11 +394,15 @@ pub(crate) struct Escape {
     pub(crate) derivative: (f64, f64),
 }
 
+fn smooth_iterations(iterations: usize, norm_sqr: f64) -> f64 {
+    let log_modulus = norm_sqr.ln() * 0.5;
+    let nu = (log_modulus / std::f64::consts::LN_2).log2();
+    iterations as f64 + 1.0 - nu
+}
+
 impl Escape {
     fn smooth_iterations(&self) -> f64 {
-        let log_modulus = self.norm_sqr.ln() * 0.5;
-        let nu = (log_modulus / std::f64::consts::LN_2).log2();
-        self.iterations as f64 + 1.0 - nu
+        smooth_iterations(self.iterations, self.norm_sqr)
     }
 
     fn normal(&self) -> (f64, f64) {
