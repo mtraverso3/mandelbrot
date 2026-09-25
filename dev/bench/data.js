@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790368073731,
+  "lastUpdate": 1790371052472,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -1038,6 +1038,128 @@ window.BENCHMARK_DATA = {
             "range": "± 0.87",
             "unit": "ms",
             "extra": "1024x820 view, chose 384000 iterations; min 112.40 ms, max 115.56 ms, 9 samples; AMD EPYC 7763 64-Core Processor"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "ae4d71632c7a326efddc3e6a2f6975ad88b8ea36",
+          "message": "Add GPU benchmark scenarios",
+          "timestamp": "2026-09-25T16:15:05-05:00",
+          "tree_id": "27eb64669b8e81e781a863afc9257c98774c8bb6",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/ae4d71632c7a326efddc3e6a2f6975ad88b8ea36"
+        },
+        "date": 1790371051330,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 41.7,
+            "range": "± 4.11",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 38.34 ms, max 54.75 ms, 24 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 28.43,
+            "range": "± 2.41",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 27.62 ms, max 36.44 ms, 34 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 510.59,
+            "range": "± 0.97",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 510.11 ms, max 512.50 ms, 5 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 391.13,
+            "range": "± 12.86",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 382.38 ms, max 418.34 ms, 5 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 478.45,
+            "range": "± 21.35",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 472.44 ms, max 529.78 ms, 5 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 328.92,
+            "range": "± 4.72",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 324.65 ms, max 336.22 ms, 5 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 94.69,
+            "range": "± 5.96",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 91.13 ms, max 110.66 ms, 11 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 495.47,
+            "range": "± 15.99",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 481.26 ms, max 519.97 ms, 3 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 514.09,
+            "range": "± 2.77",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 510.94 ms, max 517.73 ms, 3 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 113.29,
+            "range": "± 6.45",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 109.94 ms, max 128.14 ms, 9 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 44.96,
+            "range": "± 2.4",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 44.66 ms, max 52.07 ms, 22 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 43.74,
+            "range": "± 2.86",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 43.07 ms, max 54.41 ms, 23 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "auto-iterations/mini-mandelbrot",
+            "value": 26.06,
+            "range": "± 1.49",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 96000 iterations; min 25.55 ms, max 30.07 ms, 38 samples; Intel(R) Xeon(R) 6973P-C"
+          },
+          {
+            "name": "auto-iterations/deep-seahorse",
+            "value": 83.62,
+            "range": "± 0.65",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 384000 iterations; min 82.48 ms, max 84.50 ms, 12 samples; Intel(R) Xeon(R) 6973P-C"
           }
         ]
       }
