@@ -2,12 +2,12 @@
 
 use crate::ReferenceOrbit;
 use crate::color::INTERIOR;
-use crate::render::{RenderOptions, Renderer, Shading, Viewport};
+use crate::render::{PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport};
 use bytemuck::{Pod, Zeroable};
 use image::RgbImage;
 use rayon::prelude::*;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use wgpu::util::DeviceExt;
 
 /// Past this, pixel offsets approach the smallest normal f32.
@@ -38,13 +38,13 @@ struct Params {
     rows: u32,
     max_iterations: u32,
     last: u32,
-    track_derivative: u32,
     pixel_size: f32,
     left: f32,
     top: f32,
     slice_steps: u32,
     first_slice: u32,
     bla_levels: u32,
+    max_skip_radius_sqr: f32,
 }
 
 #[repr(C)]
@@ -93,8 +93,25 @@ impl std::error::Error for GpuError {}
 pub struct GpuRenderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::ComputePipeline,
+    module: wgpu::ShaderModule,
+    bind_group_layout: wgpu::BindGroupLayout,
+    layout: wgpu::PipelineLayout,
+    /// Built on first use, indexed by [`Variant::index`].
+    pipelines: [OnceLock<wgpu::ComputePipeline>; 4],
     adapter_name: String,
+}
+
+/// Features compiled in or out of the shader, like the CPU renderer's const generics.
+#[derive(Clone, Copy)]
+struct Variant {
+    skip: bool,
+    track_derivative: bool,
+}
+
+impl Variant {
+    fn index(self) -> usize {
+        self.skip as usize * 2 + self.track_derivative as usize
+    }
 }
 
 impl GpuRenderer {
@@ -116,19 +133,68 @@ impl GpuRenderer {
             .await
             .map_err(GpuError::Device)?;
         let module = device.create_shader_module(wgpu::include_wgsl!("perturbation.wgsl"));
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("perturbation"),
-            layout: None,
-            module: &module,
-            entry_point: Some("main"),
-            compilation_options: Default::default(),
-            cache: None,
+        let storage = |read_only| wgpu::BufferBindingType::Storage { read_only };
+        let types = [
+            wgpu::BufferBindingType::Uniform,
+            storage(true),
+            storage(true),
+            storage(true),
+            storage(false),
+            storage(false),
+            storage(false),
+        ];
+        let entries: Vec<_> = types
+            .into_iter()
+            .enumerate()
+            .map(|(binding, ty)| wgpu::BindGroupLayoutEntry {
+                binding: binding as u32,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            })
+            .collect();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: None,
+            entries: &entries,
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
         });
         Ok(Self {
             device,
             queue,
-            pipeline,
+            module,
+            bind_group_layout,
+            layout,
+            pipelines: Default::default(),
             adapter_name: adapter.get_info().name,
+        })
+    }
+
+    fn pipeline(&self, variant: Variant) -> &wgpu::ComputePipeline {
+        self.pipelines[variant.index()].get_or_init(|| {
+            let constants = [
+                ("SKIP", variant.skip as u8 as f64),
+                ("TRACK_DERIVATIVE", variant.track_derivative as u8 as f64),
+            ];
+            self.device
+                .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some("perturbation"),
+                    layout: Some(&self.layout),
+                    module: &self.module,
+                    entry_point: Some("main"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    cache: None,
+                })
         })
     }
 
@@ -173,6 +239,12 @@ impl GpuRenderer {
                 height as f64 / width as f64,
             )),
         };
+        let pipeline = self.pipeline(Variant {
+            // As on the CPU, skipped blocks are only long enough to pay for their lookups once
+            // perturbation is needed
+            skip: renderer.view().zoom >= PERTURBATION_ZOOM,
+            track_derivative: opts.shading == Shading::Normal,
+        });
         let band_rows = (chunking.band_pixels / width).clamp(1, height);
         let buffers = Buffers::new(self, &orbit, band_rows * width);
 
@@ -185,15 +257,15 @@ impl GpuRenderer {
                 rows: rows as u32,
                 max_iterations: opts.max_iterations.min(u32::MAX as usize - 1) as u32,
                 last: (orbit.points().len() - 1) as u32,
-                track_derivative: (opts.shading == Shading::Normal) as u32,
                 pixel_size: renderer.pixel_size() as f32,
                 left: width as f32 / 2.0,
                 top: height as f32 / 2.0,
                 slice_steps: chunking.slice_steps,
                 first_slice: 1,
                 bla_levels: orbit.bla().levels().len() as u32,
+                max_skip_radius_sqr: max_skip_radius_sqr(&orbit),
             };
-            while self.slice(&buffers, &params)? > 0 {
+            while self.slice(pipeline, &buffers, &params)? > 0 {
                 params.first_slice = 0;
             }
 
@@ -210,14 +282,19 @@ impl GpuRenderer {
 
     /// Runs up to `slice_steps` steps on every unfinished pixel of the band, returning how
     /// many pixels are still unfinished.
-    fn slice(&self, buffers: &Buffers, params: &Params) -> Result<u32, GpuError> {
+    fn slice(
+        &self,
+        pipeline: &wgpu::ComputePipeline,
+        buffers: &Buffers,
+        params: &Params,
+    ) -> Result<u32, GpuError> {
         self.queue
             .write_buffer(&buffers.params, 0, bytemuck::bytes_of(params));
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.clear_buffer(&buffers.unfinished, 0, None);
         {
             let mut pass = encoder.begin_compute_pass(&Default::default());
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &buffers.bind_group, &[]);
             pass.dispatch_workgroups(
                 params.width.div_ceil(WORKGROUP_SIZE),
@@ -256,6 +333,17 @@ impl GpuRenderer {
         buffer.unmap();
         Ok(value)
     }
+}
+
+/// Blocks are never valid further out than their first half, so the largest radius on the
+/// first merged level bounds every skip.
+fn max_skip_radius_sqr(orbit: &ReferenceOrbit) -> f32 {
+    orbit.bla().levels().get(1).map_or(0.0, |level| {
+        level
+            .iter()
+            .map(|step| step.radius_sqr as f32)
+            .fold(0.0, f32::max)
+    })
 }
 
 struct Buffers {
@@ -345,7 +433,7 @@ impl Buffers {
             .collect();
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &gpu.pipeline.get_bind_group_layout(0),
+            layout: &gpu.bind_group_layout,
             entries: &entries,
         });
         Self {
@@ -439,9 +527,8 @@ mod tests {
         assert_close_to_exact(preset("mini-mandelbrot").unwrap(), 24000, 0.25);
     }
 
-    #[test]
-    fn close_to_exact_when_skipping_at_deep_zoom() {
-        let view = Viewport {
+    fn deep_seahorse() -> Viewport {
+        Viewport {
             center_x: "-1.24949889563508492587065068503213228909045011806661"
                 .parse()
                 .unwrap(),
@@ -449,8 +536,12 @@ mod tests {
                 .parse()
                 .unwrap(),
             zoom: 4.7374e16,
-        };
-        assert_close_to_exact(view, 24000, 0.15);
+        }
+    }
+
+    #[test]
+    fn close_to_exact_when_skipping_at_deep_zoom() {
+        assert_close_to_exact(deep_seahorse(), 24000, 0.15);
     }
 
     #[test]
@@ -494,6 +585,23 @@ mod tests {
         let view = Viewport::from_f64(0.0, 1.0, GPU_MAX_ZOOM * 10.0);
         let result = gpu.render(&view, &RenderOptions::default());
         assert!(matches!(result, Err(GpuError::ZoomTooDeep(_))));
+    }
+
+    #[test]
+    fn shading_does_not_change_escapes() {
+        let gpu = GpuRenderer::new().unwrap();
+        for view in [preset("spirals").unwrap(), deep_seahorse()] {
+            let [normal, flat] = [Shading::Normal, Shading::Flat].map(|shading| {
+                let opts = RenderOptions {
+                    width: 64,
+                    height: 48,
+                    max_iterations: 4000,
+                    shading,
+                };
+                escapes(&gpu, &Renderer::new(&view, &opts), CHUNKING)
+            });
+            assert_eq!(normal, flat, "zoom {:e}", view.zoom);
+        }
     }
 
     #[test]
