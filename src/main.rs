@@ -1,8 +1,6 @@
-use mandelbrot::generate_mandelbrot_image;
-use clap::{Parser, Args, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use mandelbrot::{RenderOptions, Viewport, downsample, preset, render};
 use std::path::PathBuf;
-
-mod mandelbrot;
 
 /// Mandelbrot Set Generator CLI
 #[derive(Parser, Debug)]
@@ -58,38 +56,22 @@ struct CustomArgs {
     zoom: f64,
 }
 
-fn mandelbrot_locations(name: &str) -> Result<(f64, f64, f64), &'static str> {
-    Ok(match name {
-        "mini-mandelbrot" => (-1.249559196, 0.030466443, 1.73e6),
-        "spirals" => (-1.2494989, 0.0303330, 7.437000e7),
-        "quad-spiral" => (-4.621603e-1, -5.823998e-1, 2.633507e7),
-        "mandelbrot" => (-0.75, 0.0, 1.0),
-        _ => return Err("Invalid preset location"),
-    })
-}
-
 fn main() {
     let cli = Cli::parse();
     let start = std::time::Instant::now();
 
-    // Get coordinates and zoom based on command
-    let (x, y, zoom) = match cli.command {
+    let view = match cli.command {
         Commands::Preset(args) => {
-            let (base_x, base_y, base_zoom) = match mandelbrot_locations(&args.location) {
-                Ok((x, y, z)) => (x, y, z),
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
-                }
+            let Some(base) = preset(&args.location) else {
+                eprintln!("Error: Invalid preset location");
+                std::process::exit(1);
             };
-            
-            (base_x, base_y, base_zoom * args.zoom)
+            Viewport { zoom: base.zoom * args.zoom, ..base }
         }
-        Commands::Custom(args) => (args.x, args.y, args.zoom),
+        Commands::Custom(args) => Viewport { center_x: args.x, center_y: args.y, zoom: args.zoom },
     };
 
-    // Generate the image
-    let img = generate_mandelbrot_image(x, y, zoom, true);
+    let img = render(&view, &RenderOptions::default());
 
     if cli.verbose {
         let duration_generation = start.elapsed();
@@ -106,17 +88,7 @@ fn main() {
 
     // Resize/anti-aliasing
     if cli.resize {
-        let width = img.width();
-        let height = img.height();
-
-        let resized = image::DynamicImage::ImageRgb8(img)
-            .resize(
-                width / 2,
-                height / 2,
-                image::imageops::FilterType::Lanczos3
-            )
-            .to_rgb8();
-
+        let resized = downsample(&img);
         let mut resized_path = cli.output.clone();
         let stem = cli.output.file_stem().unwrap().to_str().unwrap();
         let ext = cli.output.extension().unwrap().to_str().unwrap();
