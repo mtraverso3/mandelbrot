@@ -96,6 +96,11 @@ enum Workload {
     },
     EncodePng,
     Downsample,
+    #[cfg(feature = "gpu")]
+    Gpu {
+        view: Viewport,
+        opts: RenderOptions,
+    },
     AutoIterations {
         view: Viewport,
     },
@@ -210,6 +215,8 @@ fn scenarios() -> Vec<Scenario> {
         workload: Workload::Downsample,
         max_samples: usize::MAX,
     });
+    #[cfg(feature = "gpu")]
+    list.extend(gpu_scenarios());
     for (location, view) in [
         ("mini-mandelbrot", preset("mini-mandelbrot").unwrap()),
         ("deep-seahorse", deep_seahorse()),
@@ -221,6 +228,52 @@ fn scenarios() -> Vec<Scenario> {
         });
     }
     list
+}
+
+/// Full-resolution presets, plus the CPU's deep seahorse scenario for direct comparison.
+#[cfg(feature = "gpu")]
+fn gpu_scenarios() -> Vec<Scenario> {
+    let full_res = |max_iterations| RenderOptions {
+        max_iterations,
+        ..RenderOptions::default()
+    };
+    let deep = RenderOptions {
+        width: 320,
+        height: 256,
+        max_iterations: 30000,
+        shading: Shading::Normal,
+    };
+    [
+        (
+            "mandelbrot/normal/full-res",
+            preset("mandelbrot").unwrap(),
+            full_res(1500),
+        ),
+        (
+            "spirals/normal/full-res",
+            preset("spirals").unwrap(),
+            full_res(1500),
+        ),
+        (
+            "mini-mandelbrot/normal/full-res-96k",
+            preset("mini-mandelbrot").unwrap(),
+            full_res(96000),
+        ),
+        ("deep-seahorse/normal", deep_seahorse(), deep),
+    ]
+    .into_iter()
+    .map(|(name, view, opts)| Scenario {
+        name: format!("gpu/{name}"),
+        workload: Workload::Gpu { view, opts },
+        max_samples: 5,
+    })
+    .collect()
+}
+
+#[cfg(feature = "gpu")]
+fn gpu() -> &'static mandelbrot::GpuRenderer {
+    static GPU: std::sync::OnceLock<mandelbrot::GpuRenderer> = std::sync::OnceLock::new();
+    GPU.get_or_init(|| mandelbrot::GpuRenderer::new().expect("no usable GPU"))
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -323,6 +376,19 @@ fn run(scenario: &Scenario, cli: &Cli, machine: &Machine, full_res: &mut Option<
                 opts.height,
                 opts.max_iterations,
                 pool.current_num_threads()
+            );
+            (durations, Some(img), detail)
+        }
+        #[cfg(feature = "gpu")]
+        Workload::Gpu { view, opts } => {
+            let gpu = gpu();
+            let (durations, img) = time(sampling, || gpu.render(view, opts).expect("GPU render"));
+            let detail = format!(
+                "{}x{}, {} iterations, {}",
+                opts.width,
+                opts.height,
+                opts.max_iterations,
+                gpu.adapter_name()
             );
             (durations, Some(img), detail)
         }

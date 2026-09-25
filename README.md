@@ -113,6 +113,9 @@ cargo bench --bench render
 
 # Fewer samples, subset of scenarios, compared against a previous run
 cargo bench --bench render -- --samples 2 --filter spirals --baseline path/to/previous
+
+# Also time the GPU renderer, in scenarios named gpu/...
+cargo bench --features gpu --bench render -- --filter gpu
 ```
 
 Each run records the machine it ran on. Comparisons against a baseline from different hardware
