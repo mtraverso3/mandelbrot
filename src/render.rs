@@ -84,9 +84,40 @@ pub const PERTURBATION_ZOOM: f64 = 1e10;
 /// Deepest supported zoom: pixel offsets and derivatives must still fit in `f64`.
 pub const MAX_ZOOM: f64 = 1e250;
 const LANES: usize = 8;
+const PROBE_COLUMNS: usize = 64;
+/// Palette bands across the middle 80% of a view's escape iterations. Outside this range the
+/// zoom-based band width is replaced, so deep views neither wash out into a single band nor
+/// turn into noise.
+const MIN_BANDS: f64 = 4.0;
+const MAX_BANDS: f64 = 48.0;
+/// Palette position of the view's 10th percentile once bands are fitted to the view, in the
+/// blues rather than the dark end of the palette.
+const ANCHOR_POSITION: f64 = 4.0;
+/// Fewer escaped probe points than this are too few to fit bands to.
+const MIN_PROBE_ESCAPES: usize = 32;
 const CYCLE_CHECK_START: usize = 16;
 const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
+
+/// The band width and phase for a view, given its zoom-based band width and the probe's smooth
+/// escape iterations. Keeps the zoom-based width while it gives between [`MIN_BANDS`] and
+/// [`MAX_BANDS`] bands; otherwise clamps to that range and blends the phase towards anchoring
+/// the 10th percentile at [`ANCHOR_POSITION`], so colors change continuously with zoom.
+fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
+    if smooth.len() < MIN_PROBE_ESCAPES {
+        return (zoom_width, 0.0);
+    }
+    smooth.sort_by(f64::total_cmp);
+    let percentile = |p: f64| smooth[((smooth.len() - 1) as f64 * p).round() as usize];
+    let (low, high) = (percentile(0.1), percentile(0.9));
+    let spread = high - low;
+    if spread <= 0.0 {
+        return (zoom_width, 0.0);
+    }
+    let width = zoom_width.clamp(spread / MAX_BANDS, spread / MIN_BANDS);
+    let anchoring = 1.0 - width.min(zoom_width) / width.max(zoom_width);
+    (width, anchoring * (ANCHOR_POSITION - low / width))
+}
 
 pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
     Renderer::new(view, opts).render()
@@ -101,6 +132,7 @@ pub fn render_rows(view: &Viewport, opts: &RenderOptions, first_row: u32, rows: 
 /// A prepared view: the pixel grid and, for deep zooms, the reference orbit, which can be
 /// shared between renderers of the same center.
 pub struct Renderer {
+    view: Viewport,
     opts: RenderOptions,
     frame: Frame,
     orbit: Option<Arc<ReferenceOrbit>>,
@@ -111,21 +143,77 @@ impl Renderer {
         Self::reusing(view, opts, None)
     }
 
-    /// Like [`Renderer::new`], but reuses `orbit` if it was computed for this center.
-    pub fn reusing(
-        view: &Viewport,
-        opts: &RenderOptions,
-        orbit: Option<Arc<ReferenceOrbit>>,
-    ) -> Self {
-        let orbit = (view.zoom >= PERTURBATION_ZOOM).then(|| match orbit {
-            Some(orbit) if orbit.matches(view, opts.max_iterations) => orbit,
-            _ => Arc::new(ReferenceOrbit::compute(view, opts.max_iterations)),
+    pub fn view(&self) -> &Viewport {
+        &self.view
+    }
+
+    /// Like [`Renderer::new`], but reuses the reference orbit and color bands of `previous`
+    /// where they still apply, e.g. for other bands or resolutions of the same view.
+    pub fn reusing(view: &Viewport, opts: &RenderOptions, previous: Option<&Renderer>) -> Self {
+        let orbit = (view.zoom >= PERTURBATION_ZOOM).then(|| {
+            match previous.and_then(|p| p.orbit.as_ref()) {
+                Some(orbit) if orbit.matches(view, opts.max_iterations) => orbit.clone(),
+                _ => Arc::new(ReferenceOrbit::compute(view, opts.max_iterations)),
+            }
         });
-        Self {
+        let mut renderer = Self {
+            view: view.clone(),
             opts: *opts,
             frame: Frame::new(view, opts),
             orbit,
-        }
+        };
+        let same_bands = previous.filter(|p| {
+            p.view == *view
+                && p.opts.max_iterations == opts.max_iterations
+                && p.probe_rows() == renderer.probe_rows()
+        });
+        (renderer.frame.band_scale, renderer.frame.band_phase) = match same_bands {
+            Some(p) => (p.frame.band_scale, p.frame.band_phase),
+            None => color_bands(renderer.frame.band_scale, &mut renderer.probe()),
+        };
+        renderer
+    }
+
+    fn probe_rows(&self) -> usize {
+        let aspect = self.opts.height as f64 / self.opts.width as f64;
+        ((PROBE_COLUMNS as f64 * aspect).round() as usize).clamp(1, 4 * PROBE_COLUMNS)
+    }
+
+    /// Smooth escape iterations of a coarse grid spanning the view, independent of the output
+    /// resolution apart from its aspect ratio.
+    fn probe(&self) -> Vec<f64> {
+        let (width, height) = (self.opts.width as f64, self.opts.height as f64);
+        let rows = self.probe_rows();
+        let frame = &self.frame;
+        let max_iterations = self.opts.max_iterations;
+        (0..rows)
+            .into_par_iter()
+            .flat_map_iter(|row| {
+                let y = (row as f64 + 0.5) * height / rows as f64;
+                let x = |column: usize| (column as f64 + 0.5) * width / PROBE_COLUMNS as f64;
+                let escapes: Vec<Option<Escape>> = match &self.orbit {
+                    Some(orbit) => (0..PROBE_COLUMNS)
+                        .map(|column| {
+                            let (dx, dy) = frame.offset_at(x(column), y);
+                            orbit.escape::<false>(dx, dy, max_iterations)
+                        })
+                        .collect(),
+                    None => (0..PROBE_COLUMNS / LANES)
+                        .flat_map(|block| {
+                            let ci = frame.center_y + frame.offset_at(0.0, y).1;
+                            let cr = std::array::from_fn(|lane| {
+                                frame.center_x + frame.offset_at(x(block * LANES + lane), y).0
+                            });
+                            escape_lanes::<false>(&cr, ci, max_iterations)
+                        })
+                        .collect(),
+                };
+                escapes
+                    .into_iter()
+                    .flatten()
+                    .map(|escape| escape.smooth_iterations())
+            })
+            .collect()
     }
 
     pub fn reference_orbit(&self) -> Option<&Arc<ReferenceOrbit>> {
@@ -203,6 +291,7 @@ struct Frame {
     center_y: f64,
     pixel_size: f64,
     band_scale: f64,
+    band_phase: f64,
     light: (f64, f64),
 }
 
@@ -216,6 +305,7 @@ impl Frame {
             center_y: view.center_y.to_f64(),
             pixel_size: BASE_VIEW_WIDTH / view.zoom / opts.width as f64,
             band_scale: (view.zoom + 1.0).log2(),
+            band_phase: 0.0,
             light: (angle.cos(), angle.sin()),
         }
     }
@@ -226,6 +316,13 @@ impl Frame {
 
     fn offset_y(&self, y: usize) -> f64 {
         (y as f64 - self.top) * self.pixel_size
+    }
+
+    fn offset_at(&self, x: f64, y: f64) -> (f64, f64) {
+        (
+            (x - self.left) * self.pixel_size,
+            (y - self.top) * self.pixel_size,
+        )
     }
 
     fn real(&self, x: usize) -> f64 {
@@ -249,9 +346,7 @@ impl Frame {
     }
 
     fn smooth_position(&self, escape: &Escape) -> f64 {
-        let log_modulus = escape.norm_sqr.ln() * 0.5;
-        let nu = (log_modulus / std::f64::consts::LN_2).log2();
-        (escape.iterations as f64 + 1.0 - nu) / self.band_scale
+        escape.smooth_iterations() / self.band_scale + self.band_phase
     }
 }
 
@@ -264,6 +359,12 @@ pub(crate) struct Escape {
 }
 
 impl Escape {
+    fn smooth_iterations(&self) -> f64 {
+        let log_modulus = self.norm_sqr.ln() * 0.5;
+        let nu = (log_modulus / std::f64::consts::LN_2).log2();
+        self.iterations as f64 + 1.0 - nu
+    }
+
     fn normal(&self) -> (f64, f64) {
         let (zr, zi) = self.z;
         let (dr, di) = self.derivative;
@@ -543,6 +644,78 @@ mod tests {
             "0.099999999999999999999999999999999999999999999"
         );
         assert_eq!(moved.pan(-3e-41, 1e-45), view);
+    }
+
+    fn spread_iterations(low: f64, high: f64) -> Vec<f64> {
+        (0..=100)
+            .map(|i| low + (high - low) * i as f64 / 100.0)
+            .collect()
+    }
+
+    #[test]
+    fn color_bands_keep_zoom_width_within_range() {
+        let (width, phase) = color_bands(20.0, &mut spread_iterations(300.0, 1000.0));
+        assert_eq!((width, phase), (20.0, 0.0));
+    }
+
+    #[test]
+    fn color_bands_widen_and_narrow_to_the_view() {
+        let mut few = spread_iterations(100.0, 110.0);
+        let (width, phase) = color_bands(1e6, &mut few);
+        assert!((width - 8.0 / MIN_BANDS).abs() < 1e-9);
+        assert!((101.0 / width + phase - ANCHOR_POSITION).abs() < 1e-3);
+
+        let mut many = spread_iterations(15000.0, 30000.0);
+        let (width, _) = color_bands(55.0, &mut many);
+        assert!((width - 12000.0 / MAX_BANDS).abs() < 1e-6);
+    }
+
+    #[test]
+    fn color_bands_change_continuously_with_zoom() {
+        let mut iterations = spread_iterations(100.0, 110.0);
+        let limit = 8.0 / MIN_BANDS;
+        let position = |zoom_width: f64, iterations: &mut [f64]| {
+            let (width, phase) = color_bands(zoom_width, iterations);
+            105.0 / width + phase
+        };
+        let below = position(limit * (1.0 - 1e-9), &mut iterations);
+        let above = position(limit * (1.0 + 1e-9), &mut iterations);
+        assert!((below - above).abs() < 1e-6, "{below} vs {above}");
+    }
+
+    #[test]
+    fn color_bands_ignore_views_with_few_escapes() {
+        assert_eq!(color_bands(133.0, &mut [100.0; 10]), (133.0, 0.0));
+        assert_eq!(color_bands(133.0, &mut [100.0; 100]), (133.0, 0.0));
+    }
+
+    #[test]
+    fn reusing_shares_bands_between_resolutions() {
+        let view = Viewport {
+            center_x: "0".parse().unwrap(),
+            center_y: "1".parse().unwrap(),
+            zoom: 1e40,
+        };
+        let full = RenderOptions {
+            width: 800,
+            height: 600,
+            max_iterations: 500,
+            shading: Shading::Normal,
+        };
+        let preview = RenderOptions {
+            width: 200,
+            height: 150,
+            ..full
+        };
+        let first = Renderer::new(&view, &full);
+        let second = Renderer::reusing(&view, &preview, Some(&first));
+        assert!(Arc::ptr_eq(
+            first.reference_orbit().unwrap(),
+            second.reference_orbit().unwrap()
+        ));
+        assert_eq!(first.frame.band_scale, second.frame.band_scale);
+        assert_eq!(first.frame.band_phase, second.frame.band_phase);
+        assert_ne!(first.frame.band_scale, (view.zoom + 1.0).log2());
     }
 
     #[test]
