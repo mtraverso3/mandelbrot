@@ -14,6 +14,7 @@ A command-line tool written in Rust to generate Mandelbrot set images. Choose fr
 - Preset locations or custom coordinates
 - Adjustable zoom
 - Optional image antialiasing
+- Configurable resolution, iteration count and shading
 - Timing information
 
 ## Installation
@@ -35,23 +36,30 @@ Commands:
   help    Print this message or the help of the given subcommand(s)
 
 Options:
-  -o, --output <OUTPUT>  Output file path [default: output.png]
-  -r, --resize           Resize output to half size (Anti-aliasing effect)
-  -v, --verbose          Show timing information
-  -h, --help             Print help
-  -V, --version          Print version
+  -o, --output <OUTPUT>          Output file path [default: output.png]
+  -r, --resize                   Also save a half-size, anti-aliased copy next to the output
+  -v, --verbose                  Show timing information
+      --width <WIDTH>            Image width in pixels [default: 4096]
+      --height <HEIGHT>          Image height in pixels [default: 3280]
+      --iterations <ITERATIONS>  Maximum iterations per pixel [default: 1500]
+      --shading <SHADING>        Shading mode [default: normal] [possible values: flat, normal]
+  -h, --help                     Print help
+  -V, --version                  Print version
 ```
 
 ### Examples
 ```bash
 # Default preset (mandelbrot)
-mandelbrot-cli preset
+mandelbrot preset
 
 # Preset with options
-mandelbrot-cli preset -l spiral -z 2.0 -o spiral.png -r -v
+mandelbrot preset -l spirals -z 2.0 -o spirals.png -r -v
 
 # Custom coordinates, passing in x, y, and zoom
-mandelbrot-cli custom -x -0.75 -y 0.0 -z 1.0 -o custom.png
+mandelbrot custom -x -0.75 -y 0.0 -z 1.0 -o custom.png
+
+# Quick, low-resolution preview with flat shading
+mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat
 ```
 
 

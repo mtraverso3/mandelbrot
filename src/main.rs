@@ -1,6 +1,10 @@
+use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
-use mandelbrot::{RenderOptions, Viewport, downsample, preset, render};
-use std::path::PathBuf;
+use image::{ImageFormat, ImageResult, RgbImage};
+use mandelbrot::{PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::Instant;
 
 /// Mandelbrot Set Generator CLI
 #[derive(Parser, Debug)]
@@ -10,16 +14,32 @@ struct Cli {
     command: Commands,
 
     /// Output file path
-    #[arg(short, long, default_value = "output.png")]
+    #[arg(short, long, global = true, default_value = "output.png")]
     output: PathBuf,
 
-    /// Resize output to half size (Anti-aliasing effect)
-    #[arg(short, long, default_value_t = false)]
+    /// Also save a half-size, anti-aliased copy next to the output
+    #[arg(short, long, global = true)]
     resize: bool,
 
     /// Show timing information
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// Image width in pixels
+    #[arg(long, global = true, default_value_t = RenderOptions::default().width, value_parser = clap::value_parser!(u32).range(1..))]
+    width: u32,
+
+    /// Image height in pixels
+    #[arg(long, global = true, default_value_t = RenderOptions::default().height, value_parser = clap::value_parser!(u32).range(1..))]
+    height: u32,
+
+    /// Maximum iterations per pixel
+    #[arg(long, global = true, default_value_t = RenderOptions::default().max_iterations)]
+    iterations: usize,
+
+    /// Shading mode
+    #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().shading)]
+    shading: Shading,
 }
 
 #[derive(Subcommand, Debug)]
@@ -32,40 +52,67 @@ enum Commands {
 
 #[derive(Args, Debug)]
 struct PresetArgs {
-    /// Mandelbrot location to generate (mandelbrot, mini-mandelbrot, spirals, quad-spiral)
-    #[arg(short, long, default_value = "mandelbrot")]
+    /// Location to render
+    #[arg(short, long, default_value = "mandelbrot", value_parser = PossibleValuesParser::new(PRESETS.map(|(name, _)| name)))]
     location: String,
 
-    /// Zoom factor multiplier
-    #[arg(short, long, default_value_t = 1.0)]
+    /// Zoom multiplier applied to the preset
+    #[arg(short, long, default_value_t = 1.0, value_parser = positive)]
     zoom: f64,
 }
 
 #[derive(Args, Debug)]
 struct CustomArgs {
-    /// X coordinate
-    #[arg(short)]
+    /// Real coordinate of the image center
+    #[arg(short, allow_negative_numbers = true)]
     x: f64,
 
-    /// Y coordinate
-    #[arg(short)]
+    /// Imaginary coordinate of the image center
+    #[arg(short, allow_negative_numbers = true)]
     y: f64,
 
-    /// Zoom factor
-    #[arg(short)]
+    /// Zoom factor, where 1 shows the whole set
+    #[arg(short, value_parser = positive)]
     zoom: f64,
 }
 
-fn main() {
+fn positive(value: &str) -> Result<f64, String> {
+    match value.parse::<f64>() {
+        Ok(v) if v > 0.0 && v.is_finite() => Ok(v),
+        Ok(_) => Err("must be a positive number".into()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+fn resized_path(output: &Path) -> PathBuf {
+    let stem = output.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match output.extension() {
+        Some(ext) => format!("{stem}_resized.{}", ext.to_string_lossy()),
+        None => format!("{stem}_resized"),
+    };
+    output.with_file_name(name)
+}
+
+fn save(img: &RgbImage, path: &Path) -> ImageResult<()> {
+    let format = ImageFormat::from_path(path).unwrap_or(ImageFormat::Png);
+    img.save_with_format(path, format)
+}
+
+fn save_outputs(img: &RgbImage, output: &Path, resize: bool) -> ImageResult<()> {
+    save(img, output)?;
+    if resize {
+        save(&downsample(img), &resized_path(output))?;
+    }
+    Ok(())
+}
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
-    let start = std::time::Instant::now();
+    let start = Instant::now();
 
     let view = match cli.command {
         Commands::Preset(args) => {
-            let Some(base) = preset(&args.location) else {
-                eprintln!("Error: Invalid preset location");
-                std::process::exit(1);
-            };
+            let base = preset(&args.location).expect("validated by clap");
             Viewport {
                 zoom: base.zoom * args.zoom,
                 ..base
@@ -77,39 +124,32 @@ fn main() {
             zoom: args.zoom,
         },
     };
+    let opts = RenderOptions {
+        width: cli.width,
+        height: cli.height,
+        max_iterations: cli.iterations,
+        shading: cli.shading,
+    };
 
-    let img = render(&view, &RenderOptions::default());
-
+    let img = render(&view, &opts);
     if cli.verbose {
-        let duration_generation = start.elapsed();
         println!(
-            "Mandelbrot image generated in: {:.3?}, saving...",
-            duration_generation
+            "Rendered {}x{} in {:.3?}",
+            img.width(),
+            img.height(),
+            start.elapsed()
         );
     }
 
-    let start2 = std::time::Instant::now();
-
-    // Save original image
-    img.save(&cli.output).expect("Failed to save output image");
-
-    // Resize/anti-aliasing
-    if cli.resize {
-        let resized = downsample(&img);
-        let mut resized_path = cli.output.clone();
-        let stem = cli.output.file_stem().unwrap().to_str().unwrap();
-        let ext = cli.output.extension().unwrap().to_str().unwrap();
-        resized_path.set_file_name(format!("{}_resized.{}", stem, ext));
-
-        resized
-            .save(&resized_path)
-            .expect("Failed to save resized image");
+    let save_start = Instant::now();
+    if let Err(e) = save_outputs(&img, &cli.output, cli.resize) {
+        eprintln!("Error: failed to save image: {e}");
+        return ExitCode::FAILURE;
     }
 
     if cli.verbose {
-        let duration_img = start2.elapsed();
-        println!("Mandelbrot image saved in: {:.3?}", duration_img);
-        let duration = start.elapsed();
-        println!("Time elapsed overall is: {:.3?}", duration);
+        println!("Saved in {:.3?}", save_start.elapsed());
+        println!("Total: {:.3?}", start.elapsed());
     }
+    ExitCode::SUCCESS
 }
