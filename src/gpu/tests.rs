@@ -23,7 +23,7 @@ fn samples(
 fn escapes(gpu: &GpuRenderer, renderer: &Renderer, variant: Variant) -> Vec<Option<usize>> {
     samples(gpu, renderer, variant, CHUNKING)
         .iter()
-        .map(|s| (s.iterations != u32::MAX).then_some(s.iterations as usize))
+        .map(|s| (s.iterations < UNDECIDED).then_some(s.iterations as usize))
         .collect()
 }
 
@@ -277,5 +277,32 @@ fn colors_match_the_cpu() {
             "{differing}/{pixels} pixels differ at zoom {:e}, {shading:?}",
             view.zoom
         );
+    }
+}
+
+#[test]
+fn auto_iterations_match_the_cpu() {
+    let gpu = GpuRenderer::new().unwrap();
+    let nucleus = |zoom| Viewport {
+        center_x: PERIOD_3_NUCLEUS.parse().unwrap(),
+        center_y: "0".parse().unwrap(),
+        zoom,
+    };
+    for view in [
+        preset("mandelbrot").unwrap(),
+        preset("spirals").unwrap(),
+        nucleus(40.0),
+        nucleus(1e12),
+        misiurewicz_i(1e40),
+        deep_seahorse(),
+    ] {
+        for (width, height) in [(400, 300), (1920, 1080)] {
+            assert_eq!(
+                gpu.auto_iterations(&view, width, height).unwrap(),
+                crate::auto_iterations(&view, width, height),
+                "zoom {:e} at {width}x{height}",
+                view.zoom
+            );
+        }
     }
 }

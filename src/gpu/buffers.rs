@@ -8,7 +8,7 @@ use wgpu::BufferUsages as Usage;
 use wgpu::util::DeviceExt;
 
 /// Size of `State` in the shader.
-const STATE_SIZE: usize = 56;
+const STATE_SIZE: usize = 72;
 const PALETTE_SIZE: f64 = 16.0;
 const ITERATION_BLOCK: f64 = 4096.0;
 
@@ -47,6 +47,7 @@ impl Params {
         let (band_scale, band_phase) = renderer.color_bands();
         let light = renderer.light();
         let (pixel_mantissa, pixel_exponent) = split(renderer.pixel_size());
+        let (left, top) = renderer.origin();
         Self {
             width: opts.width,
             first_row: 0,
@@ -54,8 +55,8 @@ impl Params {
             max_iterations: opts.max_iterations.min(u32::MAX as usize - 1) as u32,
             last: (orbit.points().len() - 1) as u32,
             pixel_size: renderer.pixel_size() as f32,
-            left: opts.width as f32 / 2.0,
-            top: opts.height as f32 / 2.0,
+            left: left as f32,
+            top: top as f32,
             slice_steps,
             first_slice: 1,
             bla_levels: orbit.bla().levels().len() as u32,

@@ -44,14 +44,16 @@ struct Step {
 }
 
 // Only the derivative's direction is used, so it is kept as mantissa * 2^exponent to stay
-// within f32 range. So is delta, while delta_exponent is negative.
+// within f32 range. So are delta, while delta_exponent is negative, and the contraction.
 struct State {
     delta: vec2<f32>,
     derivative: vec2<f32>,
     checkpoint_reference: vec2<f32>,
     checkpoint_delta: vec2<f32>,
+    contraction: vec2<f32>,
     exponent: i32,
     delta_exponent: i32,
+    contraction_exponent: i32,
     m: u32,
     n: u32,
     next_checkpoint: u32,
@@ -65,6 +67,8 @@ struct Sample {
 }
 
 const INTERIOR: u32 = 0xffffffffu;
+// Neither escaped nor known to be interior within the iteration limit
+const UNDECIDED: u32 = 0xfffffffeu;
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> orbit: array<OrbitPoint>;

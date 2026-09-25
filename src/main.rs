@@ -130,72 +130,64 @@ fn save_outputs(img: &RgbImage, output: &Path, resize: bool) -> ImageResult<()> 
     Ok(())
 }
 
-fn render_image(
-    view: &Viewport,
-    opts: &RenderOptions,
-    gpu: bool,
-    verbose: bool,
-) -> Result<RgbImage, String> {
-    if !gpu {
-        return Ok(render(view, opts));
-    }
+/// Where the image is computed, so the rest of the CLI need not know about the `gpu` feature.
+enum Backend {
+    Cpu,
     #[cfg(feature = "gpu")]
-    {
-        let gpu = mandelbrot::GpuRenderer::new().map_err(|e| e.to_string())?;
-        if verbose {
-            println!("Rendering on {}", gpu.adapter_name());
+    Gpu(Box<mandelbrot::GpuRenderer>),
+}
+
+impl Backend {
+    fn new(gpu: bool, verbose: bool) -> Result<Self, String> {
+        if !gpu {
+            return Ok(Self::Cpu);
         }
-        gpu.render(view, opts).map_err(|e| e.to_string())
+        #[cfg(feature = "gpu")]
+        {
+            let gpu = mandelbrot::GpuRenderer::new().map_err(|e| e.to_string())?;
+            if verbose {
+                println!("Rendering on {}", gpu.adapter_name());
+            }
+            Ok(Self::Gpu(Box::new(gpu)))
+        }
+        #[cfg(not(feature = "gpu"))]
+        {
+            let _ = verbose;
+            Err("this build has no GPU support; rebuild with `--features gpu`".into())
+        }
     }
-    #[cfg(not(feature = "gpu"))]
-    {
-        let _ = verbose;
-        Err("this build has no GPU support; rebuild with `--features gpu`".into())
+
+    fn auto_iterations(&self, view: &Viewport, width: u32, height: u32) -> Result<usize, String> {
+        match self {
+            Self::Cpu => Ok(auto_iterations(view, width, height)),
+            #[cfg(feature = "gpu")]
+            Self::Gpu(gpu) => gpu
+                .auto_iterations(view, width, height)
+                .map_err(|e| e.to_string()),
+        }
+    }
+
+    fn render(&self, view: &Viewport, opts: &RenderOptions) -> Result<RgbImage, String> {
+        match self {
+            Self::Cpu => Ok(render(view, opts)),
+            #[cfg(feature = "gpu")]
+            Self::Gpu(gpu) => gpu.render(view, opts).map_err(|e| e.to_string()),
+        }
     }
 }
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let start = Instant::now();
-
-    let view = match cli.command {
-        Commands::Preset(args) => {
-            let base = preset(&args.location).expect("validated by clap");
-            Viewport {
-                zoom: base.zoom * args.zoom,
-                ..base
-            }
-        }
-        Commands::Custom(args) => Viewport {
-            center_x: args.x,
-            center_y: args.y,
-            zoom: args.zoom,
-        },
-    };
-    if view.zoom > MAX_ZOOM {
-        eprintln!(
-            "Error: zoom {:e} is past the deepest supported zoom of {MAX_ZOOM:e}",
-            view.zoom
-        );
-        return ExitCode::FAILURE;
-    }
+fn run(cli: &Cli, view: &Viewport, start: Instant) -> Result<(), String> {
+    let backend = Backend::new(cli.gpu, cli.verbose)?;
     let opts = RenderOptions {
         width: cli.width,
         height: cli.height,
         max_iterations: match cli.iterations {
             Iterations::Fixed(n) => n,
-            Iterations::Auto => auto_iterations(&view, cli.width, cli.height),
+            Iterations::Auto => backend.auto_iterations(view, cli.width, cli.height)?,
         },
         shading: cli.shading,
     };
-
-    let img = match render_image(&view, &opts, cli.gpu, cli.verbose) {
-        Ok(img) => img,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let img = backend.render(view, &opts)?;
     if cli.verbose {
         println!(
             "Rendered {}x{} with {} iterations in {:.3?}",
@@ -207,14 +199,45 @@ fn main() -> ExitCode {
     }
 
     let save_start = Instant::now();
-    if let Err(e) = save_outputs(&img, &cli.output, cli.resize) {
-        eprintln!("Error: failed to save image: {e}");
-        return ExitCode::FAILURE;
-    }
-
+    save_outputs(&img, &cli.output, cli.resize)
+        .map_err(|e| format!("failed to save image: {e}"))?;
     if cli.verbose {
         println!("Saved in {:.3?}", save_start.elapsed());
         println!("Total: {:.3?}", start.elapsed());
     }
-    ExitCode::SUCCESS
+    Ok(())
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let start = Instant::now();
+
+    let view = match &cli.command {
+        Commands::Preset(args) => {
+            let base = preset(&args.location).expect("validated by clap");
+            Viewport {
+                zoom: base.zoom * args.zoom,
+                ..base
+            }
+        }
+        Commands::Custom(args) => Viewport {
+            center_x: args.x.clone(),
+            center_y: args.y.clone(),
+            zoom: args.zoom,
+        },
+    };
+    if view.zoom > MAX_ZOOM {
+        eprintln!(
+            "Error: zoom {:e} is past the deepest supported zoom of {MAX_ZOOM:e}",
+            view.zoom
+        );
+        return ExitCode::FAILURE;
+    }
+    match run(&cli, &view, start) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
