@@ -589,7 +589,7 @@ fn classify(cr: f64, ci: f64, max_iterations: usize) -> Outcome {
     Outcome::Undecided
 }
 
-fn in_main_cardioid_or_bulb(cr: f64, ci: f64) -> bool {
+pub(crate) fn in_main_cardioid_or_bulb(cr: f64, ci: f64) -> bool {
     let ci2 = ci * ci;
     let shifted = cr - 0.25;
     let q = shifted * shifted + ci2;

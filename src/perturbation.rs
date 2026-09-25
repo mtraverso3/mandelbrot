@@ -228,7 +228,7 @@ fn rescale(x: f64, y: f64) -> (f64, f64) {
     (x * scale, y * scale)
 }
 
-fn fixed_to_f64(value: &BigInt, frac_bits: u32) -> f64 {
+pub(crate) fn fixed_to_f64(value: &BigInt, frac_bits: u32) -> f64 {
     let shift = value.bits().saturating_sub(64);
     let top = (value >> shift as usize)
         .to_f64()
