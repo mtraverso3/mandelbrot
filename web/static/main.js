@@ -27,6 +27,7 @@ const ctx = canvas.getContext('2d');
 const snapshot = document.createElement('canvas');
 // The last finished render, which zooming stretches until the next one is ready
 const rendered = { canvas: document.createElement('canvas'), view: null };
+let lastRenderSeconds = 0;
 const selection = $('selection');
 
 const state = {
@@ -116,8 +117,12 @@ function dispatch() {
     }
 }
 
+// Enough bands for every worker even in small renders, which are often the slow ones
+const BANDS_PER_WORKER = 4;
+
 function bandTasks(pass, width, height) {
-    const rowsPerBand = Math.max(1, Math.floor(BAND_PIXELS / width));
+    const fewest = Math.ceil(height / (workers.length * BANDS_PER_WORKER));
+    const rowsPerBand = Math.max(1, Math.min(Math.floor(BAND_PIXELS / width), fewest));
     const tasks = [];
     for (let firstRow = 0; firstRow < height; firstRow += rowsPerBand) {
         tasks.push({
@@ -201,15 +206,18 @@ function exportImage(scale) {
 }
 
 // Renders `view` off screen for the automatic zoom, resolving to the finished keyframe
-function renderKeyframe(view, width, height) {
+function renderKeyframe(view, width, height, chooseIterations) {
     return new Promise((resolve) => {
         stopRendering();
         const target = document.createElement('canvas');
         target.width = width;
         target.height = height;
-        withIterations(view, width, height, () => {
-            startJob({ view, keyframe: true, target, resolve }, [{ pass: 'keyframe', width, height }]);
-        });
+        const start = () => startJob({ view, keyframe: true, target, resolve }, [{ pass: 'keyframe', width, height }]);
+        if (chooseIterations) {
+            withIterations(view, width, height, start);
+        } else {
+            start();
+        }
     });
 }
 
@@ -272,7 +280,10 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
     if (pass === 'full') job.fullBands.push({ image, firstRow });
     if (job.rows === job.height) {
         job.elapsed = performance.now() - job.started;
-        if (pass === 'full') keepRendered(state.view);
+        if (pass === 'full') {
+            keepRendered(state.view);
+            lastRenderSeconds = job.elapsed / 1000;
+        }
         if (pass === 'export') finishExport();
         if (pass === 'keyframe') job.resolve({ canvas: job.target, view: job.view });
     }
@@ -583,6 +594,7 @@ const autoZoom = createAutoZoom({
     clear: clearView,
     drawFrom,
     keyframeScale: () => (usesGpu() ? GPU_KEYFRAME_SCALE : 1),
+    lastRenderSeconds: () => lastRenderSeconds,
     speed: () => Number($('zoom-speed').value),
     onChange: (active) => {
         $('autozoom').textContent = active ? '⏸ Stop zooming' : '▶ Auto zoom';
