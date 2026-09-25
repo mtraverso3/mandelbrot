@@ -7,42 +7,90 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: read
-  pull-requests: read
+  contents: read
 
 concurrency:
   group: bench-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  bench:
+  build:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+
+      - name: Restore bench binary
+        id: binary
+        uses: actions/cache@v4
+        with:
+          path: dist/bench
+          key: bench-bin-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src/**', 'benches/**') }}
 
       - uses: Swatinem/rust-cache@v2
+        if: steps.binary.outputs.cache-hit != 'true'
 
-      - name: Build
-        run: cargo bench --bench render --no-run
+      - name: Build bench binary
+        if: steps.binary.outputs.cache-hit != 'true'
+        run: |
+          executable=$(cargo bench --bench render --no-run --message-format=json \
+            | jq -r 'select(.target.name == "render" and .executable != null) | .executable')
+          install -D "$executable" dist/bench
 
-      - name: Fetch baseline from latest master run
-        id: baseline
-        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-bin
+          path: dist/bench
+          retention-days: 1
+
+  baseline:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run-id: ${{ steps.find.outputs.run-id }}
+    steps:
+      - name: Find latest successful master run
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow bench.yml --branch master \
-            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$run_id"
-          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name bench-results --dir baseline
-          echo "args=--baseline baseline" >> "$GITHUB_OUTPUT"
-          echo "Comparing against run $run_id"
+            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Baseline run: ${run_id:-none}"
+
+  bench:
+    needs: [build, baseline]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-bin
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        if: needs.baseline.outputs.run-id != ''
+        continue-on-error: true
+        with:
+          name: bench-results
+          path: baseline
+          run-id: ${{ needs.baseline.outputs.run-id }}
+          github-token: ${{ github.token }}
 
       - name: Run benchmarks
-        run: cargo bench --bench render -- --out bench-results ${{ steps.baseline.outputs.args }}
+        run: |
+          chmod +x dist/bench
+          args=(--out bench-results)
+          [ -f baseline/results.json ] && args+=(--baseline baseline)
+          dist/bench "${args[@]}"
 
       - name: Job summary
         run: |
@@ -56,8 +104,21 @@ jobs:
           path: bench-results
           retention-days: 90
 
+  publish:
+    needs: bench
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results
+
       - name: Ensure gh-pages branch exists
-        if: github.event_name == 'push'
         run: |
           if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
             git config user.name "github-actions[bot]"
@@ -68,7 +129,6 @@ jobs:
           fi
 
       - name: Publish history
-        if: github.event_name == 'push'
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Mandelbrot benchmarks
