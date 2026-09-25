@@ -4,13 +4,13 @@ struct Params {
     rows: u32,
     max_iterations: u32,
     last: u32,
-    track_derivative: u32,
     pixel_size: f32,
     left: f32,
     top: f32,
     slice_steps: u32,
     first_slice: u32,
     bla_levels: u32,
+    max_skip_radius_sqr: f32,
 }
 
 struct Step {
@@ -38,6 +38,9 @@ struct Sample {
     norm_sqr: f32,
     normal: vec2<f32>,
 }
+
+override SKIP: bool;
+override TRACK_DERIVATIVE: bool;
 
 const ESCAPE_RADIUS_SQR: f32 = 10000.0;
 const INTERIOR: u32 = 0xffffffffu;
@@ -84,12 +87,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dc = pixel * params.pixel_size;
 
     for (var step = 0u; step < params.slice_steps && state.n < params.max_iterations; step++) {
-        let level = skip_level(state.m, dot(state.delta, state.delta), params.max_iterations - state.n);
+        var level = -1;
+        let delta_sqr = dot(state.delta, state.delta);
+        if SKIP && delta_sqr < params.max_skip_radius_sqr {
+            level = skip_level(state.m, delta_sqr, params.max_iterations - state.n);
+        }
         if level >= 0 {
             let range = bla_levels[level];
             let skip = bla[range.x + ((state.m - 1u) >> u32(level))];
             state.delta = mul(skip.a, state.delta) + mul(skip.b, dc);
-            if params.track_derivative != 0u {
+            if TRACK_DERIVATIVE {
                 // Normalized first so the product with a large A stays finite
                 state = normalize_derivative(state);
                 state.derivative = mul(skip.a, state.derivative) + skip.b * exp2_neg(state.exponent);
@@ -117,7 +124,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             state.checkpoint_delta = state.delta;
             state.next_checkpoint *= 2u;
         }
-        if params.track_derivative != 0u {
+        if TRACK_DERIVATIVE {
             state.derivative = 2.0 * mul(state.derivative, z) + vec2(exp2_neg(state.exponent), 0.0);
             if max(abs(state.derivative.x), abs(state.derivative.y)) > DERIVATIVE_LIMIT {
                 state = normalize_derivative(state);
