@@ -63,6 +63,25 @@ mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat
 ```
 
 
+## Web Viewer
+An interactive version runs in the browser at [mandelbrot.mtraverso.net](https://mandelbrot.mtraverso.net).
+It uses the same renderer compiled to WebAssembly, split across one Web Worker per CPU core.
+Pick a preset, drag a rectangle to zoom into it, click or scroll to zoom, and share the URL to share the view.
+
+```bash
+# Needs the wasm32-unknown-unknown target and wasm-bindgen-cli matching Cargo.lock;
+# wasm-opt (binaryen) is optional
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version <version from Cargo.lock>
+bash web/build.sh
+
+# Serve dist/ with any static file server
+python3 -m http.server -d dist 8000
+```
+
+Merges to `master` deploy to Cloudflare Workers. Each pull request gets a preview URL posted as a comment.
+
+
 ## Benchmarks
 ```bash
 # Run all scenarios, writing results, summary and images to target/bench
