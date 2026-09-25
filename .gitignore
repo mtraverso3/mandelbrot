@@ -45,3 +45,6 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+
+# Web build output
+/dist
