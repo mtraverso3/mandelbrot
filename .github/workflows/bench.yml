@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: bench-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,14 +20,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         id: toolchain
 
       - name: Restore bench binary
         id: binary
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: dist/bench
           key: bench-bin-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src/**', 'benches/**') }}
@@ -42,7 +42,7 @@ jobs:
             | jq -r 'select(.target.name == "render" and .executable != null) | .executable')
           install -D "$executable" dist/bench
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-bin
           path: dist/bench
@@ -71,12 +71,12 @@ jobs:
     permissions:
       actions: read
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: bench-bin
           path: dist
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         if: needs.baseline.outputs.run-id != ''
         continue-on-error: true
         with:
@@ -98,7 +98,7 @@ jobs:
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Rendered images and diffs are in the \`bench-results\` artifact." >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: bench-results
           path: bench-results
@@ -111,9 +111,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: bench-results
           path: bench-results
