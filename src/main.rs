@@ -2,7 +2,8 @@ use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use image::{ImageFormat, ImageResult, RgbImage};
 use mandelbrot::{
-    Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render,
+    Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Shading, Viewport, auto_iterations, downsample,
+    preset, render,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -35,9 +36,9 @@ struct Cli {
     #[arg(long, global = true, default_value_t = RenderOptions::default().height, value_parser = clap::value_parser!(u32).range(1..))]
     height: u32,
 
-    /// Maximum iterations per pixel
-    #[arg(long, global = true, default_value_t = RenderOptions::default().max_iterations)]
-    iterations: usize,
+    /// Maximum iterations per pixel, or "auto" to pick one from the view
+    #[arg(long, global = true, default_value = "1500", value_parser = iterations)]
+    iterations: Iterations,
 
     /// Shading mode
     #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().shading)]
@@ -76,6 +77,23 @@ struct CustomArgs {
     /// Zoom factor, where 1 shows the whole set (up to 1e250)
     #[arg(short, value_parser = positive)]
     zoom: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Iterations {
+    Auto,
+    Fixed(usize),
+}
+
+fn iterations(value: &str) -> Result<Iterations, String> {
+    match value {
+        "auto" => Ok(Iterations::Auto),
+        _ => match value.parse::<usize>() {
+            Ok(0) => Err("must be at least 1".into()),
+            Ok(n) => Ok(Iterations::Fixed(n)),
+            Err(_) => Err("expected a number or \"auto\"".into()),
+        },
+    }
 }
 
 fn positive(value: &str) -> Result<f64, String> {
@@ -136,16 +154,20 @@ fn main() -> ExitCode {
     let opts = RenderOptions {
         width: cli.width,
         height: cli.height,
-        max_iterations: cli.iterations,
+        max_iterations: match cli.iterations {
+            Iterations::Fixed(n) => n,
+            Iterations::Auto => auto_iterations(&view, cli.width, cli.height),
+        },
         shading: cli.shading,
     };
 
     let img = render(&view, &opts);
     if cli.verbose {
         println!(
-            "Rendered {}x{} in {:.3?}",
+            "Rendered {}x{} with {} iterations in {:.3?}",
             img.width(),
             img.height(),
+            opts.max_iterations,
             start.elapsed()
         );
     }

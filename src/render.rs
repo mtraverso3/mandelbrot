@@ -1,6 +1,6 @@
 use crate::Coordinate;
 use crate::color::{self, INTERIOR};
-use crate::perturbation::ReferenceOrbit;
+use crate::perturbation::{Contraction, ReferenceOrbit};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -81,6 +81,8 @@ const MIN_BANDS: f64 = 4.0;
 const MAX_BANDS: f64 = 48.0;
 const ANCHOR_POSITION: f64 = 4.0;
 const MIN_PROBE_ESCAPES: usize = 32;
+pub const MAX_AUTO_ITERATIONS: usize = 400_000;
+const UNDECIDED_FRACTION: f64 = 0.01;
 const CYCLE_CHECK_START: usize = 16;
 pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
@@ -102,6 +104,27 @@ fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
     (width, anchoring * (ANCHOR_POSITION - low / width))
 }
 
+/// The lowest limit, from the default up by factors of 4, at which almost every point of the
+/// view is known to escape or to be interior.
+pub fn auto_iterations(view: &Viewport, width: u32, height: u32) -> usize {
+    let mut limit = RenderOptions::default().max_iterations;
+    while limit * 4 <= MAX_AUTO_ITERATIONS {
+        let opts = RenderOptions {
+            width,
+            height,
+            max_iterations: limit,
+            shading: Shading::Flat,
+        };
+        let renderer = Renderer::new(view, &opts);
+        let points = PROBE_COLUMNS * renderer.probe_rows();
+        if renderer.undecided as f64 <= UNDECIDED_FRACTION * points as f64 {
+            break;
+        }
+        limit *= 4;
+    }
+    limit
+}
+
 pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
     Renderer::new(view, opts).render()
 }
@@ -115,6 +138,7 @@ pub struct Renderer {
     opts: RenderOptions,
     frame: Frame,
     orbit: Option<Arc<ReferenceOrbit>>,
+    undecided: usize,
 }
 
 impl Renderer {
@@ -140,16 +164,36 @@ impl Renderer {
             opts: *opts,
             frame: Frame::new(view, opts),
             orbit,
+            undecided: 0,
         };
-        let same_bands = previous.filter(|p| {
+        let same_probe = previous.filter(|p| {
             p.view == *view
                 && p.opts.max_iterations == opts.max_iterations
                 && p.probe_rows() == renderer.probe_rows()
         });
-        (renderer.frame.band_scale, renderer.frame.band_phase) = match same_bands {
-            Some(p) => (p.frame.band_scale, p.frame.band_phase),
-            None => color_bands(renderer.frame.band_scale, &mut renderer.probe()),
-        };
+        match same_probe {
+            Some(p) => {
+                (renderer.frame.band_scale, renderer.frame.band_phase) =
+                    (p.frame.band_scale, p.frame.band_phase);
+                renderer.undecided = p.undecided;
+            }
+            None => {
+                let outcomes = renderer.probe();
+                let mut smooth: Vec<f64> = outcomes
+                    .iter()
+                    .filter_map(|outcome| match outcome {
+                        Outcome::Escaped(escape) => Some(escape.smooth_iterations()),
+                        _ => None,
+                    })
+                    .collect();
+                (renderer.frame.band_scale, renderer.frame.band_phase) =
+                    color_bands(renderer.frame.band_scale, &mut smooth);
+                renderer.undecided = outcomes
+                    .iter()
+                    .filter(|outcome| matches!(outcome, Outcome::Undecided))
+                    .count();
+            }
+        }
         renderer
     }
 
@@ -158,37 +202,26 @@ impl Renderer {
         ((PROBE_COLUMNS as f64 * aspect).round() as usize).clamp(1, 4 * PROBE_COLUMNS)
     }
 
-    fn probe(&self) -> Vec<f64> {
+    fn probe(&self) -> Vec<Outcome> {
         let (width, height) = (self.opts.width as f64, self.opts.height as f64);
         let rows = self.probe_rows();
-        let frame = &self.frame;
         let max_iterations = self.opts.max_iterations;
-        (0..rows)
+        (0..rows * PROBE_COLUMNS)
             .into_par_iter()
-            .flat_map_iter(|row| {
-                let y = (row as f64 + 0.5) * height / rows as f64;
-                let x = |column: usize| (column as f64 + 0.5) * width / PROBE_COLUMNS as f64;
-                let escapes: Vec<Option<Escape>> = match &self.orbit {
-                    Some(orbit) => (0..PROBE_COLUMNS)
-                        .map(|column| {
-                            let (dx, dy) = frame.offset_at(x(column), y);
-                            orbit.escape::<false>(dx, dy, max_iterations)
-                        })
-                        .collect(),
-                    None => (0..PROBE_COLUMNS / LANES)
-                        .flat_map(|block| {
-                            let ci = frame.center_y + frame.offset_at(0.0, y).1;
-                            let cr = std::array::from_fn(|lane| {
-                                frame.center_x + frame.offset_at(x(block * LANES + lane), y).0
-                            });
-                            escape_lanes::<false>(&cr, ci, max_iterations)
-                        })
-                        .collect(),
-                };
-                escapes
-                    .into_iter()
-                    .flatten()
-                    .map(|escape| escape.smooth_iterations())
+            .map(|point| {
+                let x = (point % PROBE_COLUMNS) as f64 + 0.5;
+                let y = (point / PROBE_COLUMNS) as f64 + 0.5;
+                let (dx, dy) = self
+                    .frame
+                    .offset_at(x * width / PROBE_COLUMNS as f64, y * height / rows as f64);
+                match &self.orbit {
+                    Some(orbit) => orbit.classify(dx, dy, max_iterations),
+                    None => classify(
+                        self.frame.center_x + dx,
+                        self.frame.center_y + dy,
+                        max_iterations,
+                    ),
+                }
             })
             .collect()
     }
@@ -324,6 +357,12 @@ impl Frame {
     fn smooth_position(&self, escape: &Escape) -> f64 {
         escape.smooth_iterations() / self.band_scale + self.band_phase
     }
+}
+
+pub(crate) enum Outcome {
+    Escaped(Escape),
+    Interior,
+    Undecided,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -472,6 +511,36 @@ fn escape_lanes<const TRACK_DERIVATIVE: bool>(
         }
     }
     escapes
+}
+
+/// Plain `f64` iteration matching [`escape_lanes`], which also tells interior points apart
+/// from ones that only need more iterations.
+fn classify(cr: f64, ci: f64, max_iterations: usize) -> Outcome {
+    if in_main_cardioid_or_bulb(cr, ci) {
+        return Outcome::Interior;
+    }
+    let (mut zr, mut zi) = (0.0f64, 0.0f64);
+    let mut contraction = Contraction::new();
+    for n in 0..max_iterations {
+        let zr2 = zr * zr;
+        let zi2 = zi * zi;
+        let norm_sqr = zr2 + zi2;
+        if norm_sqr > ESCAPE_RADIUS_SQR {
+            return Outcome::Escaped(Escape {
+                iterations: n,
+                norm_sqr,
+                z: (zr, zi),
+                derivative: (1.0, 0.0),
+            });
+        }
+        if n > 0 && contraction.multiply((2.0 * zr, 2.0 * zi)) {
+            return Outcome::Interior;
+        }
+        let zi_next = zr * zi + zi * zr + ci;
+        zr = zr2 - zi2 + cr;
+        zi = zi_next;
+    }
+    Outcome::Undecided
 }
 
 fn in_main_cardioid_or_bulb(cr: f64, ci: f64) -> bool {
@@ -690,6 +759,46 @@ mod tests {
         assert_eq!(first.frame.band_scale, second.frame.band_scale);
         assert_eq!(first.frame.band_phase, second.frame.band_phase);
         assert_ne!(first.frame.band_scale, (view.zoom + 1.0).log2());
+    }
+
+    #[test]
+    fn classify_separates_interior_escaping_and_undecided_points() {
+        assert!(matches!(classify(-0.1, 0.1, 100), Outcome::Interior));
+        assert!(matches!(classify(-0.12, 0.75, 1000), Outcome::Interior));
+        assert!(matches!(classify(0.5, 0.5, 1000), Outcome::Escaped(_)));
+        assert!(matches!(classify(0.2501, 0.0, 100), Outcome::Undecided));
+    }
+
+    #[test]
+    fn classify_escapes_match_the_renderer() {
+        let cr = std::array::from_fn(|lane| -0.7453 + lane as f64 * 1e-4);
+        let escapes = escape_lanes::<false>(&cr, 0.1127, 2000);
+        for (lane, escape) in escapes.iter().enumerate() {
+            let classified = match classify(cr[lane], 0.1127, 2000) {
+                Outcome::Escaped(e) => Some(e.iterations),
+                _ => None,
+            };
+            assert_eq!(classified, escape.map(|e| e.iterations));
+        }
+    }
+
+    #[test]
+    fn auto_iterations_follow_the_view() {
+        let dendrite = Viewport {
+            center_x: "0".parse().unwrap(),
+            center_y: "1".parse().unwrap(),
+            zoom: 1e40,
+        };
+        assert_eq!(auto_iterations(&dendrite, 400, 300), 1500);
+        let minibrot = auto_iterations(
+            &Viewport::from_f64(-1.249559196, 0.030466443, 1.73e6),
+            400,
+            300,
+        );
+        assert!(
+            (24000..=MAX_AUTO_ITERATIONS).contains(&minibrot),
+            "{minibrot}"
+        );
     }
 
     #[test]

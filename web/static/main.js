@@ -7,7 +7,7 @@ const DRAG_THRESHOLD = 5;
 const CLICK_ZOOM = 2;
 const WHEEL_ZOOM_PER_PIXEL = 1.0025;
 const WHEEL_SETTLE_MS = 150;
-const MAX_ITERATIONS = 100000;
+const MAX_ITERATIONS = 10000000;
 const DEFAULT_ITERATIONS = 1500;
 const DEEP_ZOOM = 1e10;
 
@@ -21,6 +21,7 @@ const state = {
     view: null,
     preset: 'mandelbrot',
     iterations: DEFAULT_ITERATIONS,
+    autoIterations: true,
     shading: 'normal',
     historyIndex: 0,
     historyLength: 1,
@@ -77,6 +78,18 @@ function bandTasks(pass, width, height) {
 
 function render() {
     generation++;
+    if (state.autoIterations) {
+        job = { choosing: true };
+        const { width, height } = canvas;
+        queue = [{ generation, kind: 'iterations', view: state.view, width, height }];
+        updateStatus();
+        dispatch();
+    } else {
+        renderBands();
+    }
+}
+
+function renderBands() {
     const { width, height } = canvas;
     const preview = document.createElement('canvas');
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
@@ -98,7 +111,11 @@ function render() {
 
 function onBand(worker, band) {
     idle.push(worker);
-    if (band.generation === generation) {
+    if (band.generation === generation && band.kind === 'iterations') {
+        state.iterations = band.iterations;
+        updateControls();
+        renderBands();
+    } else if (band.generation === generation) {
         drawBand(band);
     }
     dispatch();
@@ -196,22 +213,24 @@ function readHash() {
     };
     const validView = view.x !== undefined && view.y !== undefined && view.zoom > 0 && view.zoom <= maxZoom();
     const iterations = Math.round(number('it'));
+    const fixed = iterations >= 1 && iterations <= MAX_ITERATIONS;
 
     return {
         preset,
         view: validView ? view : presetFor(preset),
-        iterations: iterations >= 1 && iterations <= MAX_ITERATIONS ? iterations : DEFAULT_ITERATIONS,
+        iterations: fixed ? iterations : DEFAULT_ITERATIONS,
+        autoIterations: !fixed,
         shading: params.get('s') === 'flat' ? 'flat' : 'normal',
     };
 }
 
 function hash() {
-    const { view, iterations, shading, preset } = state;
+    const { view, iterations, autoIterations, shading, preset } = state;
     return '#' + new URLSearchParams({
         x: view.x,
         y: view.y,
         z: view.zoom,
-        it: iterations,
+        it: autoIterations ? 'auto' : iterations,
         s: shading,
         p: preset,
     });
@@ -261,6 +280,7 @@ function updateControls() {
     $('preset').value = atPreset ? state.preset : 'custom';
     $('shading').value = state.shading;
     $('iterations').value = state.iterations;
+    $('auto-iterations').checked = state.autoIterations;
     $('back').disabled = state.historyIndex === 0;
     $('forward').disabled = state.historyIndex >= state.historyLength - 1;
     const digits = Math.max(15, Math.ceil(Math.log10(view.zoom)) + 5);
@@ -268,11 +288,15 @@ function updateControls() {
     $('center').textContent = `${shorten(view.x, digits)} ${imaginary}i`;
     $('zoom').textContent = `${formatZoom(view.zoom)}×`;
     $('zoom-limit').hidden = view.zoom < maxZoom();
-    $('deep-hint').hidden = view.zoom < DEEP_ZOOM;
+    $('deep-hint').hidden = state.autoIterations || view.zoom < DEEP_ZOOM;
 }
 
 function updateStatus() {
     if (!job) return;
+    if (job.choosing) {
+        $('status').textContent = 'Choosing iteration limit…';
+        return;
+    }
     const status = $('status');
     const size = `${canvas.width}×${canvas.height}`;
     if (job.elapsed !== undefined) {
@@ -332,6 +356,12 @@ function setupControls() {
     $('iterations').addEventListener('change', (event) => {
         const value = Math.round(Number(event.target.value));
         state.iterations = Math.min(Math.max(Number.isFinite(value) ? value : DEFAULT_ITERATIONS, 1), MAX_ITERATIONS);
+        state.autoIterations = false;
+        writeUrl(false);
+        render();
+    });
+    $('auto-iterations').addEventListener('change', (event) => {
+        state.autoIterations = event.target.checked;
         writeUrl(false);
         render();
     });

@@ -43,7 +43,7 @@ Options:
   -v, --verbose                  Show timing information
       --width <WIDTH>            Image width in pixels [default: 4096]
       --height <HEIGHT>          Image height in pixels [default: 3280]
-      --iterations <ITERATIONS>  Maximum iterations per pixel [default: 1500]
+      --iterations <ITERATIONS>  Maximum iterations per pixel, or "auto" to pick one from the view [default: 1500]
       --shading <SHADING>        Shading mode [default: normal] [possible values: flat, normal]
   -h, --help                     Print help
   -V, --version                  Print version
@@ -60,9 +60,10 @@ mandelbrot preset -l spirals -z 2.0 -o spirals.png -r -v
 # Custom coordinates, passing in x, y, and zoom
 mandelbrot custom -x -0.75 -y 0.0 -z 1.0 -o custom.png
 
-# Deep zoom: coordinates take any number of decimal places, and deep views need more iterations
+# Deep zoom: coordinates take any number of decimal places, and "auto" picks the iteration
+# limit the view needs
 mandelbrot custom -x -1.24949889563508492587065068503213228909045011806661 \
-    -y 0.03033300303590165779311010118330780526875599532123 -z 4.7e16 --iterations 100000
+    -y 0.03033300303590165779311010118330780526875599532123 -z 4.7e16 --iterations auto
 
 # Quick, low-resolution preview with flat shading
 mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat
