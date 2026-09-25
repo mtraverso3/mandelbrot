@@ -14,7 +14,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 ## Features
 - Generate Mandelbrot set visualizations
 - Preset locations or custom coordinates
-- Adjustable zoom
+- Adjustable zoom, down to 10²⁵⁰ using perturbation theory past the limits of 64-bit floats
 - Optional image antialiasing
 - Configurable resolution, iteration count and shading
 - Timing information
@@ -59,6 +59,10 @@ mandelbrot preset -l spirals -z 2.0 -o spirals.png -r -v
 
 # Custom coordinates, passing in x, y, and zoom
 mandelbrot custom -x -0.75 -y 0.0 -z 1.0 -o custom.png
+
+# Deep zoom: coordinates take any number of decimal places, and deep views need more iterations
+mandelbrot custom -x -1.24949889563508492587065068503213228909045011806661 \
+    -y 0.03033300303590165779311010118330780526875599532123 -z 4.7e16 --iterations 100000
 
 # Quick, low-resolution preview with flat shading
 mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat

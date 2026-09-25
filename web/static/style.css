@@ -135,7 +135,7 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
-#precision-warning {
+#zoom-limit {
     margin: 0;
     color: var(--accent);
     font-size: 12px;

@@ -20,6 +20,35 @@ impl Viewport {
             zoom,
         }
     }
+
+    /// Moves the center by `(dx, dy)` in the complex plane.
+    pub fn pan(&self, dx: f64, dy: f64) -> Self {
+        let scale = center_digits(self.zoom);
+        Self {
+            center_x: self.center_x.offset(dx, scale),
+            center_y: self.center_y.offset(dy, scale),
+            zoom: self.zoom,
+        }
+    }
+
+    /// Zooms by `factor` (clamped to [`MAX_ZOOM`]) around the point `(dx, dy)` away from the
+    /// center, which stays in place on screen.
+    pub fn zoom_at(&self, dx: f64, dy: f64, factor: f64) -> Self {
+        let zoom = (self.zoom * factor).min(MAX_ZOOM);
+        let keep = 1.0 - self.zoom / zoom;
+        let scale = center_digits(zoom);
+        Self {
+            center_x: self.center_x.offset(dx * keep, scale),
+            center_y: self.center_y.offset(dy * keep, scale),
+            zoom,
+        }
+    }
+}
+
+/// Decimal places that keep the center well below a pixel at `zoom`, for images up to
+/// 100,000 pixels wide.
+fn center_digits(zoom: f64) -> u32 {
+    zoom.max(1.0).log10().ceil() as u32 + 10
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -486,6 +515,34 @@ mod tests {
             ..RenderOptions::default()
         };
         render_rows(&Viewport::from_f64(0.0, 0.0, 1.0), &opts, 0, &mut [0; 5]);
+    }
+
+    #[test]
+    fn zoom_at_keeps_the_anchor_in_place() {
+        let view = Viewport::from_f64(-0.5, 0.25, 4.0);
+        let zoomed = view.zoom_at(0.1, -0.2, 8.0);
+        assert_eq!(zoomed.zoom, 32.0);
+        assert_eq!(zoomed.center_x.to_string(), "-0.4125");
+        assert_eq!(zoomed.center_y.to_string(), "0.075");
+        assert_eq!(view.zoom_at(0.0, 0.0, 1e300).zoom, MAX_ZOOM);
+    }
+
+    #[test]
+    fn deep_pans_keep_full_precision() {
+        let view = Viewport {
+            zoom: 1e40,
+            ..Viewport::from_f64(-0.75, 0.1, 1.0)
+        };
+        let moved = view.pan(3e-41, -1e-45);
+        assert_eq!(
+            moved.center_x.to_string(),
+            "-0.74999999999999999999999999999999999999997"
+        );
+        assert_eq!(
+            moved.center_y.to_string(),
+            "0.099999999999999999999999999999999999999999999"
+        );
+        assert_eq!(moved.pan(-3e-41, 1e-45), view);
     }
 
     #[test]

@@ -60,11 +60,15 @@ impl Coordinate {
         self.scale
     }
 
-    /// `self + delta`, rounded to `scale` decimal places (or kept exact if it already has more).
+    /// `self + delta`, rounded to `scale` decimal places.
     pub fn offset(&self, delta: f64, scale: u32) -> Self {
         assert!(delta.is_finite(), "offsets must be finite");
-        let scale = scale.max(self.scale).min(MAX_DIGITS);
-        let base = &self.digits * pow10(scale - self.scale);
+        let scale = scale.min(MAX_DIGITS);
+        let base = if scale >= self.scale {
+            &self.digits * pow10(scale - self.scale)
+        } else {
+            div_round(&self.digits, &pow10(self.scale - scale))
+        };
         Self::new(base + scaled_f64(delta, scale), scale)
     }
 
@@ -250,7 +254,7 @@ mod tests {
     fn offset_is_exact_at_requested_scale() {
         let base = c("-1.249559196000000000000000000001");
         assert_eq!(
-            base.offset(0.5, 0).to_string(),
+            base.offset(0.5, 30).to_string(),
             "-0.749559196000000000000000000001"
         );
         assert_eq!(

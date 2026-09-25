@@ -1,7 +1,6 @@
-import init, { presetNames, presetView } from './mandelbrot_web.js';
+import init, { difference, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
 
 const BASE_VIEW_WIDTH = 3;
-const PRECISION_LIMIT = 1e13;
 const PREVIEW_DIVISOR = 4;
 const BAND_PIXELS = 1 << 16;
 const DRAG_THRESHOLD = 5;
@@ -10,6 +9,7 @@ const WHEEL_ZOOM_PER_PIXEL = 1.0025;
 const WHEEL_SETTLE_MS = 150;
 const MAX_ITERATIONS = 100000;
 const DEFAULT_ITERATIONS = 1500;
+const DEEP_ZOOM = 1e10;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -128,19 +128,17 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
     updateStatus();
 }
 
-// Geometry, matching the Rust renderer: pixel (px, py) maps to
-// center + (p - size / 2) * pixelSize, with the view BASE_VIEW_WIDTH / zoom wide.
+// Geometry, matching the Rust renderer: pixel (px, py) is center + (p - size / 2) * pixelSize,
+// with the view BASE_VIEW_WIDTH / zoom wide. Centers are exact decimal strings, so all
+// arithmetic on them happens in wasm; offsets from the center always fit in f64.
 
 function pixelSize(view) {
     return BASE_VIEW_WIDTH / view.zoom / canvas.width;
 }
 
-function toComplex(view, px, py) {
+function offsetFromCenter(view, px, py) {
     const size = pixelSize(view);
-    return {
-        x: view.x + (px - canvas.width / 2) * size,
-        y: view.y + (py - canvas.height / 2) * size,
-    };
+    return { dx: (px - canvas.width / 2) * size, dy: (py - canvas.height / 2) * size };
 }
 
 function clientToCanvas(clientX, clientY) {
@@ -152,12 +150,17 @@ function clientToCanvas(clientX, clientY) {
 }
 
 function zoomAt(px, py, factor) {
-    const anchor = toComplex(state.view, px, py);
-    return {
-        x: anchor.x + (state.view.x - anchor.x) / factor,
-        y: anchor.y + (state.view.y - anchor.y) / factor,
-        zoom: state.view.zoom * factor,
-    };
+    const { view } = state;
+    const { dx, dy } = offsetFromCenter(view, px, py);
+    const [x, y, zoom] = zoomView(view.x, view.y, view.zoom, dx, dy, factor);
+    return { x, y, zoom: Number(zoom) };
+}
+
+function zoomToRect(px, py, factor) {
+    const { view } = state;
+    const { dx, dy } = offsetFromCenter(view, px, py);
+    const [x, y] = pan(view.x, view.y, view.zoom, dx, dy);
+    return { x, y, zoom: Math.min(view.zoom * factor, maxZoom()) };
 }
 
 // Redraws the current image as it would appear in `to`, for instant feedback while rendering.
@@ -169,9 +172,9 @@ function reproject(from, to) {
 
     const oldSize = pixelSize(from);
     const ratio = pixelSize(to) / oldSize;
-    const topLeft = toComplex(to, 0, 0);
-    const sx = (topLeft.x - from.x) / oldSize + width / 2;
-    const sy = (topLeft.y - from.y) / oldSize + height / 2;
+    const topLeft = offsetFromCenter(to, 0, 0);
+    const sx = (difference(to.x, from.x) + topLeft.dx) / oldSize + width / 2;
+    const sy = (difference(to.y, from.y) + topLeft.dy) / oldSize + height / 2;
 
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
@@ -183,7 +186,7 @@ function reproject(from, to) {
 
 function presetFor(name) {
     const view = presetView(name);
-    return view && { x: view[0], y: view[1], zoom: view[2] };
+    return view && { x: view[0], y: view[1], zoom: Number(view[2]) };
 }
 
 function readHash() {
@@ -194,8 +197,12 @@ function readHash() {
     };
 
     const preset = presetNames().includes(params.get('p')) ? params.get('p') : 'mandelbrot';
-    const view = { x: number('x'), y: number('y'), zoom: number('z') };
-    const validView = Number.isFinite(view.x) && Number.isFinite(view.y) && view.zoom > 0 && Number.isFinite(view.zoom);
+    const view = {
+        x: normalizeCoordinate(params.get('x') ?? ''),
+        y: normalizeCoordinate(params.get('y') ?? ''),
+        zoom: number('z'),
+    };
+    const validView = view.x !== undefined && view.y !== undefined && view.zoom > 0 && view.zoom <= maxZoom();
     const iterations = Math.round(number('it'));
 
     return {
@@ -252,6 +259,11 @@ function formatZoom(zoom) {
     return zoom >= 1e4 ? zoom.toExponential(3) : zoom.toPrecision(4);
 }
 
+function shorten(coordinate, digits) {
+    const point = coordinate.indexOf('.');
+    return point === -1 ? coordinate : coordinate.slice(0, point + 1 + digits);
+}
+
 function updateControls() {
     const { view } = state;
     const preset = presetFor(state.preset);
@@ -261,9 +273,12 @@ function updateControls() {
     $('iterations').value = state.iterations;
     $('back').disabled = state.historyIndex === 0;
     $('forward').disabled = state.historyIndex >= state.historyLength - 1;
-    $('center').textContent = `${view.x.toPrecision(15)} ${view.y < 0 ? '−' : '+'} ${Math.abs(view.y).toPrecision(15)}i`;
+    const digits = Math.max(15, Math.ceil(Math.log10(view.zoom)) + 5);
+    const imaginary = view.y.startsWith('-') ? `− ${shorten(view.y.slice(1), digits)}` : `+ ${shorten(view.y, digits)}`;
+    $('center').textContent = `${shorten(view.x, digits)} ${imaginary}i`;
     $('zoom').textContent = `${formatZoom(view.zoom)}×`;
-    $('precision-warning').hidden = view.zoom < PRECISION_LIMIT;
+    $('zoom-limit').hidden = view.zoom < maxZoom();
+    $('deep-hint').hidden = view.zoom < DEEP_ZOOM;
 }
 
 function updateStatus() {
@@ -341,7 +356,8 @@ function setupControls() {
         canvas.toBlob((blob) => {
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
-            link.download = `mandelbrot_${state.view.x}_${state.view.y}_${formatZoom(state.view.zoom)}.png`;
+            const name = [state.view.x, state.view.y].map((c) => shorten(c, 12)).join('_');
+            link.download = `mandelbrot_${name}_${formatZoom(state.view.zoom)}.png`;
             link.click();
             URL.revokeObjectURL(link.href);
         }, 'image/png');
@@ -420,9 +436,8 @@ function setupPointer() {
         endDrag();
         if (rect) {
             const center = clientToCanvas(rect.left + rect.width / 2, rect.top + rect.height / 2);
-            const target = toComplex(state.view, center.px, center.py);
             const factor = canvas.getBoundingClientRect().width / rect.width;
-            navigate({ x: target.x, y: target.y, zoom: state.view.zoom * factor });
+            navigate(zoomToRect(center.px, center.py, factor));
         } else {
             const { px, py } = clientToCanvas(start.x, start.y);
             navigate(zoomAt(px, py, event.shiftKey ? 1 / CLICK_ZOOM : CLICK_ZOOM));

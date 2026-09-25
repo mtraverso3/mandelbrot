@@ -2,7 +2,7 @@ use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use image::{ImageFormat, ImageResult, RgbImage};
 use mandelbrot::{
-    Coordinate, PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render,
+    Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -73,7 +73,7 @@ struct CustomArgs {
     #[arg(short, allow_negative_numbers = true)]
     y: Coordinate,
 
-    /// Zoom factor, where 1 shows the whole set
+    /// Zoom factor, where 1 shows the whole set (up to 1e250)
     #[arg(short, value_parser = positive)]
     zoom: f64,
 }
@@ -126,6 +126,13 @@ fn main() -> ExitCode {
             zoom: args.zoom,
         },
     };
+    if view.zoom > MAX_ZOOM {
+        eprintln!(
+            "Error: zoom {:e} is past the deepest supported zoom of {MAX_ZOOM:e}",
+            view.zoom
+        );
+        return ExitCode::FAILURE;
+    }
     let opts = RenderOptions {
         width: cli.width,
         height: cli.height,
