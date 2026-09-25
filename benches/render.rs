@@ -152,6 +152,48 @@ fn scenarios() -> Vec<Scenario> {
         },
         max_samples: 3,
     });
+    // Past f64 precision, rendered with perturbation: a copy of seahorse valley inside a
+    // period-472 minibrot, and the Misiurewicz point c = i
+    list.push(Scenario {
+        name: "render/deep-seahorse/normal".into(),
+        workload: Workload::Render {
+            view: Viewport {
+                center_x: "-1.24949889563508492587065068503213228909045011806661"
+                    .parse()
+                    .unwrap(),
+                center_y: "0.03033300303590165779311010118330780526875599532123"
+                    .parse()
+                    .unwrap(),
+                zoom: 4.7374e16,
+            },
+            opts: RenderOptions {
+                width: 320,
+                height: 256,
+                max_iterations: 30000,
+                shading: Shading::Normal,
+            },
+            threads: None,
+        },
+        max_samples: 3,
+    });
+    list.push(Scenario {
+        name: "render/misiurewicz-1e100/normal".into(),
+        workload: Workload::Render {
+            view: Viewport {
+                center_x: "0".parse().unwrap(),
+                center_y: "1".parse().unwrap(),
+                zoom: 1e100,
+            },
+            opts: RenderOptions {
+                width: BENCH_SIZE.0,
+                height: BENCH_SIZE.1,
+                max_iterations: 3000,
+                shading: Shading::Normal,
+            },
+            threads: None,
+        },
+        max_samples: usize::MAX,
+    });
     list.push(Scenario {
         name: "encode/png/full-res".into(),
         workload: Workload::EncodePng,

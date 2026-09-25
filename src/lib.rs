@@ -1,10 +1,14 @@
 mod color;
 mod coordinate;
+mod perturbation;
 mod render;
 mod resample;
 
 pub use coordinate::{Coordinate, ParseCoordinateError};
-pub use render::{RenderOptions, Shading, Viewport, render, render_rows};
+pub use perturbation::ReferenceOrbit;
+pub use render::{
+    MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport, render, render_rows,
+};
 pub use resample::resize_lanczos3;
 
 pub fn downsample(img: &image::RgbImage) -> image::RgbImage {
