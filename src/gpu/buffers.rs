@@ -34,7 +34,9 @@ pub(super) struct Params {
     inv_band_scale: f32,
     band_cycle: f32,
     band_phase: f32,
-    _padding: [u32; 3],
+    pixel_mantissa: f32,
+    pixel_exponent: i32,
+    _padding: u32,
 }
 
 impl Params {
@@ -44,6 +46,7 @@ impl Params {
         let view = renderer.view();
         let (band_scale, band_phase) = renderer.color_bands();
         let light = renderer.light();
+        let (pixel_mantissa, pixel_exponent) = split(renderer.pixel_size());
         Self {
             width: opts.width,
             first_row: 0,
@@ -64,7 +67,9 @@ impl Params {
             inv_band_scale: (1.0 / band_scale) as f32,
             band_cycle: (ITERATION_BLOCK / band_scale).rem_euclid(PALETTE_SIZE) as f32,
             band_phase: band_phase.rem_euclid(PALETTE_SIZE) as f32,
-            _padding: [0; 3],
+            pixel_mantissa,
+            pixel_exponent,
+            _padding: 0,
         }
     }
 }
@@ -80,13 +85,77 @@ fn max_skip_radius_sqr(orbit: &ReferenceOrbit) -> f32 {
     })
 }
 
+/// `x` as an f32 mantissa and a power of two, for values past f32 range.
+fn split(x: f64) -> (f32, i32) {
+    // Blocks whose coefficients overflowed have no radius, so are never used
+    if x == 0.0 || !x.is_finite() {
+        return (x as f32, 0);
+    }
+    let exponent = x.abs().log2().floor() as i32 + 1;
+    ((x / 2f64.powi(exponent)) as f32, exponent)
+}
+
+/// A complex number as an f32 mantissa pair sharing one power of two.
+fn split_complex((re, im): (f64, f64)) -> ([f32; 2], i32) {
+    let (_, exponent) = split(re.abs().max(im.abs()));
+    let scale = 2f64.powi(-exponent);
+    ([(re * scale) as f32, (im * scale) as f32], exponent)
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct OrbitPoint {
+    z: [f32; 2],
+    mantissa: [f32; 2],
+    exponent: i32,
+    _padding: u32,
+}
+
+impl OrbitPoint {
+    fn new(z: (f64, f64)) -> Self {
+        let (mantissa, exponent) = split_complex(z);
+        Self {
+            z: [z.0 as f32, z.1 as f32],
+            mantissa,
+            exponent,
+            _padding: 0,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Step {
     a: [f32; 2],
     b: [f32; 2],
+    a_mantissa: [f32; 2],
+    b_mantissa: [f32; 2],
+    a_exponent: i32,
+    b_exponent: i32,
     radius_sqr: f32,
-    _padding: f32,
+    radius_mantissa: f32,
+    radius_exponent: i32,
+    _padding: u32,
+}
+
+impl Step {
+    fn new(step: &crate::bla::Step) -> Self {
+        let (a_mantissa, a_exponent) = split_complex(step.a);
+        let (b_mantissa, b_exponent) = split_complex(step.b);
+        let (radius_mantissa, radius_exponent) = split(step.radius_sqr.sqrt());
+        Self {
+            a: [step.a.0 as f32, step.a.1 as f32],
+            b: [step.b.0 as f32, step.b.1 as f32],
+            a_mantissa,
+            b_mantissa,
+            a_exponent,
+            b_exponent,
+            radius_sqr: step.radius_sqr as f32,
+            radius_mantissa,
+            radius_exponent,
+            _padding: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -111,21 +180,12 @@ impl Buffers {
     /// Buffers for bands of up to `pixels` pixels.
     pub(super) fn new(gpu: &GpuRenderer, orbit: &ReferenceOrbit, pixels: usize) -> Self {
         let device = &gpu.device;
-        let points: Vec<[f32; 2]> = orbit
-            .points()
-            .iter()
-            .map(|&(r, i)| [r as f32, i as f32])
-            .collect();
+        let points: Vec<OrbitPoint> = orbit.points().iter().map(|&z| OrbitPoint::new(z)).collect();
         let mut steps = Vec::new();
         let mut levels = Vec::new();
         for level in orbit.bla().levels() {
             levels.push([steps.len() as u32, level.len() as u32]);
-            steps.extend(level.iter().map(|step| Step {
-                a: [step.a.0 as f32, step.a.1 as f32],
-                b: [step.b.0 as f32, step.b.1 as f32],
-                radius_sqr: step.radius_sqr as f32,
-                _padding: 0.0,
-            }));
+            steps.extend(level.iter().map(Step::new));
         }
         if steps.is_empty() {
             steps.push(Step::zeroed());
@@ -199,5 +259,22 @@ impl Buffers {
             unfinished_readback,
             bind_group,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_keeps_values_past_f32_range() {
+        for x in [3e-200, -7.5e150, 1.0, 0.1] {
+            let (mantissa, exponent) = split(x);
+            assert!((0.5..1.0).contains(&mantissa.abs()), "{x}: {mantissa}");
+            let back = mantissa as f64 * 2f64.powi(exponent);
+            assert!((back / x - 1.0).abs() < 1e-7, "{x} came back as {back}");
+        }
+        assert_eq!(split(0.0), (0.0, 0));
+        assert_eq!(split(f64::INFINITY), (f32::INFINITY, 0));
     }
 }

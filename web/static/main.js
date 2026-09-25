@@ -1,4 +1,4 @@
-import init, { difference, gpuMaxZoom, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
+import init, { difference, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
 
 const BASE_VIEW_WIDTH = 3;
 const PREVIEW_DIVISOR = 4;
@@ -85,7 +85,7 @@ function startGpu() {
 }
 
 function usesGpu() {
-    return gpu.ready && state.backend === 'gpu' && state.view.zoom <= gpuMaxZoom();
+    return gpu.ready && state.backend === 'gpu';
 }
 
 function onGpuMessage(message) {

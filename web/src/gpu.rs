@@ -1,5 +1,5 @@
 use crate::{options, viewport};
-use mandelbrot::{GPU_MAX_ZOOM, GpuRenderer, Renderer};
+use mandelbrot::{GpuRenderer, Renderer};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
@@ -80,9 +80,4 @@ impl GpuViewer {
             Ok(finished.into())
         }))
     }
-}
-
-#[wasm_bindgen(js_name = gpuMaxZoom)]
-pub fn gpu_max_zoom() -> f64 {
-    GPU_MAX_ZOOM
 }
