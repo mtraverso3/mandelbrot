@@ -1,7 +1,9 @@
 use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use image::{ImageFormat, ImageResult, RgbImage};
-use mandelbrot::{PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render};
+use mandelbrot::{
+    Coordinate, PRESETS, RenderOptions, Shading, Viewport, downsample, preset, render,
+};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -53,7 +55,7 @@ enum Commands {
 #[derive(Args, Debug)]
 struct PresetArgs {
     /// Location to render
-    #[arg(short, long, default_value = "mandelbrot", value_parser = PossibleValuesParser::new(PRESETS.map(|(name, _)| name)))]
+    #[arg(short, long, default_value = "mandelbrot", value_parser = PossibleValuesParser::new(PRESETS.map(|(name, ..)| name)))]
     location: String,
 
     /// Zoom multiplier applied to the preset
@@ -63,13 +65,13 @@ struct PresetArgs {
 
 #[derive(Args, Debug)]
 struct CustomArgs {
-    /// Real coordinate of the image center
+    /// Real coordinate of the image center, to any number of decimal places
     #[arg(short, allow_negative_numbers = true)]
-    x: f64,
+    x: Coordinate,
 
-    /// Imaginary coordinate of the image center
+    /// Imaginary coordinate of the image center, to any number of decimal places
     #[arg(short, allow_negative_numbers = true)]
-    y: f64,
+    y: Coordinate,
 
     /// Zoom factor, where 1 shows the whole set
     #[arg(short, value_parser = positive)]

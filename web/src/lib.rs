@@ -15,11 +15,7 @@ pub fn render_rows_rgba(
     first_row: u32,
     row_count: u32,
 ) -> Vec<u8> {
-    let view = Viewport {
-        center_x,
-        center_y,
-        zoom,
-    };
+    let view = Viewport::from_f64(center_x, center_y, zoom);
     let opts = RenderOptions {
         width,
         height,
@@ -43,11 +39,11 @@ pub fn render_rows_rgba(
 
 #[wasm_bindgen(js_name = presetNames)]
 pub fn preset_names() -> Vec<String> {
-    PRESETS.iter().map(|(name, _)| name.to_string()).collect()
+    PRESETS.iter().map(|(name, ..)| name.to_string()).collect()
 }
 
 /// The preset's view as `[center_x, center_y, zoom]`.
 #[wasm_bindgen(js_name = presetView)]
 pub fn preset_view(name: &str) -> Option<Vec<f64>> {
-    mandelbrot::preset(name).map(|v| vec![v.center_x, v.center_y, v.zoom])
+    mandelbrot::preset(name).map(|v| vec![v.center_x.to_f64(), v.center_y.to_f64(), v.zoom])
 }

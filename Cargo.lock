@@ -574,6 +574,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "image",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "rayon",
  "serde",
  "serde_json",
