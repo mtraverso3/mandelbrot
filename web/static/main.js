@@ -11,11 +11,15 @@ const MAX_ITERATIONS = 10000000;
 const DEFAULT_ITERATIONS = 1500;
 const DEEP_ZOOM = 1e10;
 const GPU_START_TIMEOUT_MS = 5000;
+// Renders that finish sooner go straight to full resolution without flashing the preview
+const PREVIEW_DELAY_MS = 150;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
 const ctx = canvas.getContext('2d');
 const snapshot = document.createElement('canvas');
+// The last finished render, which zooming stretches until the next one is ready
+const rendered = { canvas: document.createElement('canvas'), view: null };
 const selection = $('selection');
 
 const state = {
@@ -138,6 +142,7 @@ function renderBands() {
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
     preview.height = Math.max(1, Math.ceil(height / PREVIEW_DIVISOR));
 
+    const withPreview = previewHelps();
     job = {
         started: performance.now(),
         onGpu: usesGpu(),
@@ -155,12 +160,13 @@ function renderBands() {
             iterations: state.iterations,
             normal: state.shading === 'normal',
             passes: [
-                { pass: 'preview', width: preview.width, height: preview.height },
+                ...(withPreview ? [{ pass: 'preview', width: preview.width, height: preview.height }] : []),
                 { pass: 'full', width, height },
             ],
         });
     } else {
-        queue = [...bandTasks('preview', preview.width, preview.height), ...bandTasks('full', width, height)];
+        const previewTasks = withPreview ? bandTasks('preview', preview.width, preview.height) : [];
+        queue = [...previewTasks, ...bandTasks('full', width, height)];
         dispatch();
     }
     updateStatus();
@@ -184,11 +190,9 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
         job.preview.getContext('2d').putImageData(image, 0, firstRow);
         job.previewRows += rowCount;
         if (job.previewRows === job.preview.height) {
-            ctx.imageSmoothingEnabled = true;
-            ctx.drawImage(job.preview, 0, 0, canvas.width, canvas.height);
-            for (const band of job.fullBands) {
-                ctx.putImageData(band.image, 0, band.firstRow);
-            }
+            const previewed = job;
+            const wait = PREVIEW_DELAY_MS - (performance.now() - job.started);
+            setTimeout(() => showPreview(previewed), Math.max(0, wait));
         }
     } else {
         ctx.putImageData(image, 0, firstRow);
@@ -196,9 +200,19 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
         job.fullRows += rowCount;
         if (job.fullRows === job.height) {
             job.elapsed = performance.now() - job.started;
+            keepRendered(state.view);
         }
     }
     updateStatus();
+}
+
+function showPreview(previewed) {
+    if (previewed !== job || job.elapsed !== undefined) return;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(job.preview, 0, 0, canvas.width, canvas.height);
+    for (const band of job.fullBands) {
+        ctx.putImageData(band.image, 0, band.firstRow);
+    }
 }
 
 // Centers are exact decimal strings, so arithmetic on them happens in wasm
@@ -234,22 +248,49 @@ function zoomToRect(px, py, factor) {
     return { x, y, zoom: Math.min(view.zoom * factor, maxZoom()) };
 }
 
+function keepRendered(view) {
+    rendered.canvas.width = canvas.width;
+    rendered.canvas.height = canvas.height;
+    rendered.canvas.getContext('2d').drawImage(canvas, 0, 0);
+    rendered.view = view;
+}
+
+// Where `view` lies in the last finished render, in its pixels
+function renderedRect(view) {
+    const image = rendered.canvas;
+    const oldSize = BASE_VIEW_WIDTH / rendered.view.zoom / image.width;
+    const ratio = pixelSize(view) / oldSize;
+    const topLeft = offsetFromCenter(view, 0, 0);
+    return {
+        x: (difference(view.x, rendered.view.x) + topLeft.dx) / oldSize + image.width / 2,
+        y: (difference(view.y, rendered.view.y) + topLeft.dy) / oldSize + image.height / 2,
+        width: canvas.width * ratio,
+        height: canvas.height * ratio,
+    };
+}
+
+// Stretches the last finished render over the new view, so repeated zooms never resample
+// an already stretched image
 function reproject(from, to) {
     const { width, height } = canvas;
-    snapshot.width = width;
-    snapshot.height = height;
-    snapshot.getContext('2d').drawImage(canvas, 0, 0);
-
-    const oldSize = pixelSize(from);
-    const ratio = pixelSize(to) / oldSize;
-    const topLeft = offsetFromCenter(to, 0, 0);
-    const sx = (difference(to.x, from.x) + topLeft.dx) / oldSize + width / 2;
-    const sy = (difference(to.y, from.y) + topLeft.dy) / oldSize + height / 2;
-
+    if (!rendered.view) keepRendered(from);
+    const rect = renderedRect(to);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, width, height);
-    ctx.imageSmoothingEnabled = ratio > 1;
-    ctx.drawImage(snapshot, sx, sy, width * ratio, height * ratio, 0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(rendered.canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, width, height);
+}
+
+// The preview only beats the stretched last render where that is magnified further than the
+// preview is, or leaves part of the view uncovered
+function previewHelps() {
+    if (!rendered.view) return true;
+    const rect = renderedRect(state.view);
+    const covered = rect.x >= 0 && rect.y >= 0
+        && rect.x + rect.width <= rendered.canvas.width
+        && rect.y + rect.height <= rendered.canvas.height;
+    return !covered || canvas.width / rect.width > PREVIEW_DIVISOR;
 }
 
 function presetFor(name) {
