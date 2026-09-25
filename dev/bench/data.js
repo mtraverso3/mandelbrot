@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790362424582,
+  "lastUpdate": 1790363779507,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -686,6 +686,114 @@ window.BENCHMARK_DATA = {
             "range": "± 0.36",
             "unit": "ms",
             "extra": "4096x3280 -> 2048x1640; min 47.86 ms, max 49.67 ms, 21 samples; AMD EPYC 9V74 80-Core Processor"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "a790303a3911278cb52f1101c778ae528e95f10f",
+          "message": "Trim comments to the non-obvious",
+          "timestamp": "2026-09-25T14:13:54-05:00",
+          "tree_id": "66bc55809de6e72c59bf4d2fdc9362798f6931e8",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/a790303a3911278cb52f1101c778ae528e95f10f"
+        },
+        "date": 1790363778663,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 59.89,
+            "range": "± 7.77",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 58.22 ms, max 81.82 ms, 16 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 44.52,
+            "range": "± 0.97",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 42.70 ms, max 45.34 ms, 23 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 789.47,
+            "range": "± 48.09",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 786.94 ms, max 910.57 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 588.01,
+            "range": "± 2.24",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 586.74 ms, max 591.82 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 732.18,
+            "range": "± 7.25",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 731.48 ms, max 750.01 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 506.78,
+            "range": "± 4.07",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 498.55 ms, max 510.65 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 131.05,
+            "range": "± 0.44",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 130.97 ms, max 132.34 ms, 8 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 726.45,
+            "range": "± 5.06",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 719.41 ms, max 731.77 ms, 3 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 746.66,
+            "range": "± 3.67",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 741.94 ms, max 750.92 ms, 3 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 152.85,
+            "range": "± 3.4",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 150.07 ms, max 159.29 ms, 7 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 54.81,
+            "range": "± 0.28",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 54.65 ms, max 55.81 ms, 19 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 58.83,
+            "range": "± 0.49",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 58.52 ms, max 60.75 ms, 17 samples; AMD EPYC 7763 64-Core Processor"
           }
         ]
       }
