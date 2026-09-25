@@ -16,9 +16,13 @@ struct Cli {
     #[arg(long, default_value = "target/bench")]
     out: PathBuf,
 
-    /// Timed samples per scenario, after one warmup run
+    /// Minimum timed samples per scenario, after one warmup run
     #[arg(long, default_value_t = 5)]
     samples: usize,
+
+    /// Keep sampling fast scenarios until this many seconds have been measured
+    #[arg(long, default_value_t = 1.0)]
+    min_time: f64,
 
     /// Only run scenarios whose name contains this string
     #[arg(long)]
@@ -28,8 +32,8 @@ struct Cli {
     #[arg(long)]
     baseline: Option<PathBuf>,
 
-    /// Relative slowdown reported as a regression
-    #[arg(long, default_value_t = 0.10)]
+    /// Smallest relative change reported as a regression or improvement
+    #[arg(long, default_value_t = 0.05)]
     threshold: f64,
 
     #[arg(long, hide = true)]
@@ -37,6 +41,52 @@ struct Cli {
 }
 
 const BENCH_SIZE: (u32, u32) = (1024, 820);
+const MAX_SAMPLES: usize = 50;
+const NOISE_SIGMAS: f64 = 3.0;
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+struct Machine {
+    cpu: String,
+    logical_cores: usize,
+    os: String,
+    arch: String,
+}
+
+impl Machine {
+    fn detect() -> Self {
+        let cpu = fs::read_to_string("/proc/cpuinfo")
+            .ok()
+            .and_then(|info| {
+                info.lines()
+                    .find(|line| line.starts_with("model name"))
+                    .and_then(|line| line.split_once(':'))
+                    .map(|(_, model)| model.trim().to_string())
+            })
+            .unwrap_or_else(|| "unknown CPU".into());
+        Self {
+            cpu,
+            logical_cores: std::thread::available_parallelism().map_or(0, |n| n.get()),
+            os: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Machine {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}, {} logical CPUs ({}/{})",
+            self.cpu, self.logical_cores, self.os, self.arch
+        )
+    }
+}
+
+struct Sampling {
+    min_samples: usize,
+    max_samples: usize,
+    min_time: Duration,
+}
 
 enum Workload {
     Render {
@@ -152,15 +202,19 @@ impl Stats {
     }
 }
 
-fn time<T>(samples: usize, mut f: impl FnMut() -> T) -> (Vec<Duration>, T) {
+fn time<T>(sampling: &Sampling, mut f: impl FnMut() -> T) -> (Vec<Duration>, T) {
     let mut output = f();
-    let durations = (0..samples)
-        .map(|_| {
-            let start = Instant::now();
-            output = std::hint::black_box(f());
-            start.elapsed()
-        })
-        .collect();
+    let mut durations = Vec::new();
+    let mut total = Duration::ZERO;
+    while durations.len() < sampling.min_samples
+        || (total < sampling.min_time && durations.len() < sampling.max_samples)
+    {
+        let start = Instant::now();
+        output = std::hint::black_box(f());
+        let elapsed = start.elapsed();
+        durations.push(elapsed);
+        total += elapsed;
+    }
     (durations, output)
 }
 
@@ -176,8 +230,13 @@ struct Run {
     image: Option<RgbImage>,
 }
 
-fn run(scenario: &Scenario, samples: usize, full_res: &mut Option<RgbImage>) -> Run {
-    let samples = samples.min(scenario.max_samples).max(1);
+fn run(scenario: &Scenario, cli: &Cli, machine: &Machine, full_res: &mut Option<RgbImage>) -> Run {
+    let max_samples = scenario.max_samples.min(MAX_SAMPLES);
+    let sampling = &Sampling {
+        min_samples: cli.samples.clamp(1, max_samples),
+        max_samples,
+        min_time: Duration::from_secs_f64(cli.min_time),
+    };
     let mut source_image = || {
         full_res
             .get_or_insert_with(|| {
@@ -196,7 +255,7 @@ fn run(scenario: &Scenario, samples: usize, full_res: &mut Option<RgbImage>) -> 
                 .num_threads(threads.unwrap_or(0))
                 .build()
                 .expect("thread pool");
-            let (durations, img) = pool.install(|| time(samples, || render(view, opts)));
+            let (durations, img) = pool.install(|| time(sampling, || render(view, opts)));
             if *opts == RenderOptions::default() && Some(*view) == preset("mandelbrot") {
                 full_res.get_or_insert_with(|| img.clone());
             }
@@ -211,7 +270,7 @@ fn run(scenario: &Scenario, samples: usize, full_res: &mut Option<RgbImage>) -> 
         }
         Workload::EncodePng => {
             let img = source_image();
-            let (durations, bytes) = time(samples, || encode_png(&img));
+            let (durations, bytes) = time(sampling, || encode_png(&img));
             (
                 durations,
                 None,
@@ -225,7 +284,7 @@ fn run(scenario: &Scenario, samples: usize, full_res: &mut Option<RgbImage>) -> 
         }
         Workload::Downsample => {
             let img = source_image();
-            let (durations, small) = time(samples, || downsample(&img));
+            let (durations, small) = time(sampling, || downsample(&img));
             let detail = format!(
                 "{}x{} -> {}x{}",
                 img.width(),
@@ -245,10 +304,11 @@ fn run(scenario: &Scenario, samples: usize, full_res: &mut Option<RgbImage>) -> 
             value: round2(stats.median),
             range: format!("± {:.2}", stats.stddev),
             extra: format!(
-                "{detail}; min {:.2} ms, max {:.2} ms, {} samples",
+                "{detail}; min {:.2} ms, max {:.2} ms, {} samples; {}",
                 stats.min,
                 stats.max,
-                durations.len()
+                durations.len(),
+                machine.cpu
             ),
         },
         image,
@@ -306,28 +366,61 @@ fn diff_images(new: &RgbImage, old: &RgbImage) -> Option<(ImageDiff, RgbImage)> 
 struct Baseline {
     results: HashMap<String, BenchResult>,
     images: PathBuf,
+    machine: Option<Machine>,
 }
 
-fn load_baseline(dir: &Path) -> Option<Baseline> {
-    let json = fs::read_to_string(dir.join("results.json")).ok()?;
-    let results: Vec<BenchResult> = serde_json::from_str(&json).ok()?;
-    Some(Baseline {
-        results: results.into_iter().map(|r| (r.name.clone(), r)).collect(),
-        images: dir.join("images"),
-    })
+impl Baseline {
+    fn load(dir: &Path) -> Option<Self> {
+        let json = fs::read_to_string(dir.join("results.json")).ok()?;
+        let results: Vec<BenchResult> = serde_json::from_str(&json).ok()?;
+        let machine = fs::read_to_string(dir.join("machine.json"))
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok());
+        Some(Self {
+            results: results.into_iter().map(|r| (r.name.clone(), r)).collect(),
+            images: dir.join("images"),
+            machine,
+        })
+    }
+
+    fn hardware_note(&self, machine: &Machine) -> String {
+        match &self.machine {
+            Some(m) if m == machine => "Baseline ran on the same hardware.".into(),
+            Some(m) => format!(
+                "⚠️ Baseline ran on different hardware ({m}); timing deltas are marked ❔ and are not comparable."
+            ),
+            None => "⚠️ Baseline hardware is unknown; timing deltas are marked ❔ and may not be comparable.".into(),
+        }
+    }
 }
 
-fn timing_cell(result: &BenchResult, baseline: Option<&Baseline>, threshold: f64) -> String {
+fn relative_noise(result: &BenchResult) -> f64 {
+    let stddev: f64 = result
+        .range
+        .trim_start_matches('±')
+        .trim()
+        .parse()
+        .unwrap_or(0.0);
+    stddev / result.value
+}
+
+fn timing_cell(
+    result: &BenchResult,
+    baseline: Option<&Baseline>,
+    comparable: bool,
+    threshold: f64,
+) -> String {
     let Some(old) = baseline.and_then(|b| b.results.get(&result.name)) else {
         return "–".into();
     };
     let change = result.value / old.value - 1.0;
-    let marker = if change > threshold {
-        "🔴"
-    } else if change < -threshold {
-        "🟢"
-    } else {
-        "⚪"
+    let noise = NOISE_SIGMAS * (relative_noise(result) + relative_noise(old));
+    let significant = change.abs() > threshold.max(noise);
+    let marker = match (comparable, significant) {
+        (false, _) => "❔",
+        (true, false) => "⚪",
+        (true, true) if change > 0.0 => "🔴",
+        (true, true) => "🟢",
     };
     format!("{marker} {:+.1}% (was {:.2})", change * 100.0, old.value)
 }
@@ -369,13 +462,17 @@ fn main() {
     let _ = fs::remove_dir_all(&diff_dir);
     fs::create_dir_all(&images_dir).expect("create output dir");
 
+    let machine = Machine::detect();
     let baseline = cli.baseline.as_deref().and_then(|dir| {
-        let loaded = load_baseline(dir);
+        let loaded = Baseline::load(dir);
         if loaded.is_none() {
             eprintln!("warning: no usable baseline in {}", dir.display());
         }
         loaded
     });
+    let comparable = baseline
+        .as_ref()
+        .is_some_and(|b| b.machine.as_ref() == Some(&machine));
 
     let mut full_res = None;
     let mut results = Vec::new();
@@ -392,7 +489,7 @@ fn main() {
             continue;
         }
         eprint!("{:<40}", scenario.name);
-        let Run { result, image } = run(&scenario, cli.samples, &mut full_res);
+        let Run { result, image } = run(&scenario, &cli, &machine, &mut full_res);
         eprintln!("{:>10.2} ms {}", result.value, result.range);
 
         let image_status = match &image {
@@ -409,7 +506,7 @@ fn main() {
             result.name,
             result.value,
             result.range,
-            timing_cell(&result, baseline.as_ref(), cli.threshold),
+            timing_cell(&result, baseline.as_ref(), comparable, cli.threshold),
             image_status,
             result.extra
         )
@@ -417,12 +514,22 @@ fn main() {
         results.push(result);
     }
 
-    let summary = format!(
-        "## Mandelbrot benchmarks\n\n{} logical CPUs, {} samples per scenario (median shown).\n\n{table}",
-        std::thread::available_parallelism().map_or(0, |n| n.get()),
-        cli.samples
+    let mut summary = format!(
+        "## Mandelbrot benchmarks\n\nRan on {machine}. Median of at least {} samples per scenario; \
+         changes count only beyond {:.0}% and {NOISE_SIGMAS}σ of combined noise.\n\n",
+        cli.samples,
+        cli.threshold * 100.0
     );
+    if let Some(baseline) = &baseline {
+        writeln!(summary, "{}\n", baseline.hardware_note(&machine)).unwrap();
+    }
+    summary.push_str(&table);
     fs::write(cli.out.join("summary.md"), &summary).expect("write summary");
+    fs::write(
+        cli.out.join("machine.json"),
+        serde_json::to_string_pretty(&machine).unwrap(),
+    )
+    .expect("write machine info");
     fs::write(
         cli.out.join("results.json"),
         serde_json::to_string_pretty(&results).unwrap(),
