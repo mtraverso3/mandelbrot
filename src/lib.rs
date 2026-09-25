@@ -2,7 +2,7 @@ mod color;
 mod render;
 mod resample;
 
-pub use render::{RenderOptions, Shading, Viewport, render};
+pub use render::{RenderOptions, Shading, Viewport, render, render_rows};
 pub use resample::resize_lanczos3;
 
 pub fn downsample(img: &image::RgbImage) -> image::RgbImage {
