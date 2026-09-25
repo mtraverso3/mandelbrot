@@ -59,7 +59,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install lavapipe
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers
-      - run: cargo test --features gpu gpu::
+      - run: 'cargo test --features gpu -- gpu::'
 
   web:
     runs-on: ubuntu-latest
