@@ -1,4 +1,5 @@
 import init, { difference, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
+import { createAutoZoom } from './autozoom.js';
 
 const BASE_VIEW_WIDTH = 3;
 const PREVIEW_DIVISOR = 4;
@@ -15,6 +16,8 @@ const EXPORT_SCALES = [1, 2, 4, 8];
 // Browsers refuse canvases with a longer side than this
 const MAX_CANVAS_SIDE = 16384;
 const KEY_PAN_FRACTION = 0.1;
+// Keyframes are rendered sharper than the screen where the GPU makes that cheap
+const GPU_KEYFRAME_SCALE = 1.5;
 // Renders that finish sooner go straight to full resolution without flashing the preview
 const PREVIEW_DELAY_MS = 150;
 
@@ -120,7 +123,7 @@ function bandTasks(pass, width, height) {
         tasks.push({
             generation,
             pass,
-            view: state.view,
+            view: job.view,
             width,
             height,
             iterations: state.iterations,
@@ -142,19 +145,25 @@ function stopRendering() {
 }
 
 function render() {
+    stopAutoZoom();
     stopRendering();
-    if (state.autoIterations) {
-        job = { choosing: true, onGpu: usesGpu() };
-        chooseIterations();
-        updateStatus();
-    } else {
-        renderBands();
+    withIterations(state.view, canvas.width, canvas.height, renderBands);
+}
+
+// Chooses the iteration limit for `view` first when it is automatic, then calls `then`
+function withIterations(view, width, height, then) {
+    if (!state.autoIterations) {
+        then();
+        return;
     }
+    job = { choosing: true, onGpu: usesGpu(), view, width, height, then };
+    chooseIterations();
+    updateStatus();
 }
 
 function chooseIterations() {
-    const { width, height } = canvas;
-    const task = { generation, kind: 'iterations', view: state.view, width, height };
+    const { view, width, height } = job;
+    const task = { generation, kind: 'iterations', view, width, height };
     if (usesGpu()) {
         gpu.worker.postMessage(task);
     } else {
@@ -166,7 +175,7 @@ function chooseIterations() {
 function onIterations(iterations) {
     state.iterations = iterations;
     updateControls();
-    renderBands();
+    job.then();
 }
 
 function renderBands() {
@@ -191,9 +200,31 @@ function exportImage(scale) {
     startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height }]);
 }
 
+// Renders `view` off screen for the automatic zoom, resolving to the finished keyframe
+function renderKeyframe(view, width, height) {
+    return new Promise((resolve) => {
+        stopRendering();
+        const target = document.createElement('canvas');
+        target.width = width;
+        target.height = height;
+        withIterations(view, width, height, () => {
+            startJob({ view, keyframe: true, target, resolve }, [{ pass: 'keyframe', width, height }]);
+        });
+    });
+}
+
 function startJob(fields, passes) {
     const last = passes[passes.length - 1];
-    job = { ...fields, started: performance.now(), onGpu: usesGpu(), passes, width: last.width, height: last.height, rows: 0 };
+    job = {
+        view: state.view,
+        ...fields,
+        started: performance.now(),
+        onGpu: usesGpu(),
+        passes,
+        width: last.width,
+        height: last.height,
+        rows: 0,
+    };
     dispatchJob();
     updateStatus();
 }
@@ -202,7 +233,7 @@ function dispatchJob() {
     if (job.onGpu) {
         gpu.worker.postMessage({
             generation,
-            view: state.view,
+            view: job.view,
             iterations: state.iterations,
             normal: state.shading === 'normal',
             passes: job.passes,
@@ -235,7 +266,7 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
         }
         return;
     }
-    const target = pass === 'export' ? job.target.getContext('2d') : ctx;
+    const target = pass === 'full' ? ctx : job.target.getContext('2d');
     target.putImageData(image, 0, firstRow);
     job.rows += rowCount;
     if (pass === 'full') job.fullBands.push({ image, firstRow });
@@ -243,6 +274,7 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
         job.elapsed = performance.now() - job.started;
         if (pass === 'full') keepRendered(state.view);
         if (pass === 'export') finishExport();
+        if (pass === 'keyframe') job.resolve({ canvas: job.target, view: job.view });
     }
     updateStatus();
 }
@@ -309,31 +341,46 @@ function keepRendered(view) {
     rendered.view = view;
 }
 
-// Where `view` lies in the last finished render, in its pixels
-function renderedRect(view) {
-    const image = rendered.canvas;
-    const oldSize = BASE_VIEW_WIDTH / rendered.view.zoom / image.width;
+// Where `view` lies in `source`, a finished render `{ canvas, view }`, in its pixels
+function rectIn(source, view) {
+    const image = source.canvas;
+    const oldSize = BASE_VIEW_WIDTH / source.view.zoom / image.width;
     const ratio = pixelSize(view) / oldSize;
     const topLeft = offsetFromCenter(view, 0, 0);
     return {
-        x: (difference(view.x, rendered.view.x) + topLeft.dx) / oldSize + image.width / 2,
-        y: (difference(view.y, rendered.view.y) + topLeft.dy) / oldSize + image.height / 2,
+        x: (difference(view.x, source.view.x) + topLeft.dx) / oldSize + image.width / 2,
+        y: (difference(view.y, source.view.y) + topLeft.dy) / oldSize + image.height / 2,
         width: canvas.width * ratio,
         height: canvas.height * ratio,
     };
 }
 
+function renderedRect(view) {
+    return rectIn(rendered, view);
+}
+
+function clearView() {
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+// Draws `view` by stretching the finished render `source` over it
+function drawFrom(source, view, alpha = 1) {
+    const rect = rectIn(source, view);
+    ctx.globalAlpha = alpha;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(source.canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, canvas.width, canvas.height);
+    ctx.globalAlpha = 1;
+}
+
 // Stretches the last finished render over the new view, so repeated zooms never resample
 // an already stretched image
 function reproject(from, to) {
-    const { width, height } = canvas;
     if (!rendered.view) keepRendered(from);
-    const rect = renderedRect(to);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, width, height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(rendered.canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, width, height);
+    clearView();
+    drawFrom(rendered, to);
 }
 
 // The preview only beats the stretched last render where that is magnified further than the
@@ -403,6 +450,7 @@ function writeUrl(push) {
 
 // Moves to `view` right away by stretching the last render; the caller renders it
 function showView(view) {
+    stopAutoZoom();
     const from = state.view;
     state.view = view;
     reproject(from, view);
@@ -415,6 +463,7 @@ function navigate(view, { push = true } = {}) {
 }
 
 window.addEventListener('popstate', (event) => {
+    stopAutoZoom();
     const from = state.view;
     Object.assign(state, readHash());
     state.historyIndex = event.state?.index ?? 0;
@@ -473,6 +522,8 @@ function updateStatus() {
         status.textContent = job.elapsed === undefined
             ? `Exporting ${size}… ${percent}% on ${device}`
             : `Exported ${size} in ${seconds} on ${device}`;
+    } else if (job.keyframe) {
+        status.textContent = `Auto zoom · next frame ${percent}% on ${device}`;
     } else {
         status.textContent = job.elapsed === undefined
             ? `Rendering… ${percent}% on ${device}`
@@ -509,6 +560,59 @@ function resizeCanvas() {
     ctx.drawImage(snapshot, 0, 0, width, height);
     updateExportScales();
     return true;
+}
+
+const autoZoom = createAutoZoom({
+    view: () => state.view,
+    show: (view, withControls) => {
+        state.view = view;
+        if (withControls) writeUrl(false);
+    },
+    size: () => ({ width: canvas.width, height: canvas.height }),
+    pixelSize,
+    finished: () => {
+        if (!rendered.view) return null;
+        const copy = document.createElement('canvas');
+        copy.width = rendered.canvas.width;
+        copy.height = rendered.canvas.height;
+        copy.getContext('2d').drawImage(rendered.canvas, 0, 0);
+        return { canvas: copy, view: rendered.view };
+    },
+    renderKeyframe,
+    rectIn,
+    clear: clearView,
+    drawFrom,
+    keyframeScale: () => (usesGpu() ? GPU_KEYFRAME_SCALE : 1),
+    speed: () => Number($('zoom-speed').value),
+    onChange: (active) => {
+        $('autozoom').textContent = active ? '⏸ Stop zooming' : '▶ Auto zoom';
+        $('autozoom').setAttribute('aria-pressed', String(active));
+    },
+    onEnd: () => {
+        stopAutoZoom();
+        writeUrl(false);
+        render();
+    },
+});
+
+// The keyframe on screen becomes the render later zooms stretch
+function stopAutoZoom() {
+    const frame = autoZoom.stop();
+    if (frame) {
+        rendered.canvas = frame.canvas;
+        rendered.view = frame.view;
+    }
+}
+
+function toggleAutoZoom() {
+    if (autoZoom.active) {
+        stopAutoZoom();
+        writeUrl(false);
+        render();
+    } else {
+        stopRendering();
+        autoZoom.start();
+    }
 }
 
 function setPanelCollapsed(collapsed) {
@@ -560,6 +664,7 @@ function setupControls() {
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
     $('reset').addEventListener('click', () => navigate(presetFor(state.preset)));
     $('download').addEventListener('click', () => exportImage(Number($('export-scale').value)));
+    $('autozoom').addEventListener('click', toggleAutoZoom);
 
     $('toggle-panel').addEventListener('click', () => {
         setPanelCollapsed(!$('panel').classList.contains('collapsed'));
@@ -633,6 +738,9 @@ function setupPointer() {
             const center = clientToCanvas(rect.left + rect.width / 2, rect.top + rect.height / 2);
             const factor = canvas.getBoundingClientRect().width / rect.width;
             navigate(zoomToRect(center.px, center.py, factor));
+        } else if (autoZoom.active) {
+            const { px, py } = clientToCanvas(start.x, start.y);
+            autoZoom.retarget(px, py);
         } else {
             const { px, py } = clientToCanvas(start.x, start.y);
             navigate(zoomAt(px, py, event.shiftKey ? 1 / CLICK_ZOOM : CLICK_ZOOM));
@@ -731,7 +839,11 @@ function setupTouch() {
             render();
         } else if (event.type === 'pointerup') {
             const point = gesture.start.get(event.pointerId);
-            navigate(zoomAt(point.x, point.y, CLICK_ZOOM));
+            if (autoZoom.active) {
+                autoZoom.retarget(point.x, point.y);
+            } else {
+                navigate(zoomAt(point.x, point.y, CLICK_ZOOM));
+            }
         }
     };
     canvas.addEventListener('pointerup', lift);
@@ -741,7 +853,7 @@ function setupTouch() {
 function setupKeyboard() {
     const pans = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
     window.addEventListener('keydown', (event) => {
-        if (event.target.closest('input, select, textarea') || event.ctrlKey || event.metaKey || event.altKey) return;
+        if (event.target.closest('input, select, textarea, button') || event.ctrlKey || event.metaKey || event.altKey) return;
         const { width, height } = canvas;
         const push = !event.repeat;
         if (pans[event.key]) {
@@ -756,6 +868,8 @@ function setupKeyboard() {
             navigate(zoomAt(width / 2, height / 2, 1 / CLICK_ZOOM), { push });
         } else if (event.key === 'r' || event.key === 'R') {
             navigate(presetFor(state.preset));
+        } else if (event.key === ' ') {
+            toggleAutoZoom();
         } else {
             return;
         }
