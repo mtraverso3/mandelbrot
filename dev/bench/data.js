@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790351185814,
+  "lastUpdate": 1790353387763,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -94,6 +94,100 @@ window.BENCHMARK_DATA = {
             "range": "± 0.31",
             "unit": "ms",
             "extra": "4096x3280 -> 2048x1640; min 259.43 ms, max 260.26 ms, 5 samples"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "4013e486c92e2e4ade4b254d6319afc31c2c1f03",
+          "message": "Use as_chunks_mut for fixed-size pixel chunks",
+          "timestamp": "2026-09-25T11:21:14-05:00",
+          "tree_id": "8a76a7aaeaee05b9dd82d7c7dc75b599249d219d",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/4013e486c92e2e4ade4b254d6319afc31c2c1f03"
+        },
+        "date": 1790353386895,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 60.66,
+            "range": "± 7.84",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 56.93 ms, max 78.19 ms, 5 samples"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 48.63,
+            "range": "± 6.42",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 42.39 ms, max 57.71 ms, 5 samples"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 789.57,
+            "range": "± 31.52",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 786.63 ms, max 869.34 ms, 5 samples"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 593.51,
+            "range": "± 54.59",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 588.67 ms, max 729.45 ms, 5 samples"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 731.97,
+            "range": "± 14.32",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 730.91 ms, max 768.23 ms, 5 samples"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 509.46,
+            "range": "± 1.09",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 508.02 ms, max 511.20 ms, 5 samples"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 129.75,
+            "range": "± 0.64",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 129.71 ms, max 131.36 ms, 5 samples"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 741.59,
+            "range": "± 21.9",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 716.00 ms, max 769.62 ms, 3 samples"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 56.24,
+            "range": "± 0.43",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 55.78 ms, max 56.87 ms, 5 samples"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 58.56,
+            "range": "± 0.17",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 58.32 ms, max 58.81 ms, 5 samples"
           }
         ]
       }
