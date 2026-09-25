@@ -10,13 +10,22 @@ import { difference, maxZoom, pan } from './mandelbrot_web.js';
 // within a quarter of its width.
 
 const AHEAD = 2;
-// Stretching a keyframe further than this stalls the zoom until the next one is ready
-const MAX_MAGNIFICATION = 2;
+// Zooming further past a keyframe than the next one is stalls until that one is ready
+const MAX_STRETCH = AHEAD;
+// Keyframes that take longer than a doubling of the zoom come out smaller, down to this
+// fraction of the canvas, so heavy regions slow the zoom less
+const MIN_KEYFRAME_SCALE = 0.35;
+// Iteration needs change slowly with depth, and choosing them can cost more than a keyframe
+const CHOOSE_ITERATIONS_EVERY = 3;
 const CROSSFADE_MS = 250;
 // The target's offset from the center shrinks as zoom^-(CENTERING - 1)
 const CENTERING = 2;
 const DETAIL_COLUMNS = 64;
 const SEARCH_RADIUS = 0.15;
+// Interior is white; next to it escapes take the most iterations, so steering avoids it
+const WHITE = 250;
+const WHITE_NEIGHBORHOOD = 4;
+const WHITE_PENALTY = 4;
 // After a click, the zoom keeps its target for this many times deeper
 const MANUAL_ZOOM = 16;
 const UI_INTERVAL_MS = 250;
@@ -24,8 +33,9 @@ const UI_INTERVAL_MS = 250;
 /**
  * `host` connects the zoom to the page: `view()`, `show(view, withControls)`, `size()`,
  * `pixelSize(view)` on the canvas,
- * `finished()`, `renderKeyframe(view, width, height)`, `rectIn(source, view)`, `clear()`,
- * `drawFrom(source, view, alpha)`, `keyframeScale()`, `speed()`, `onChange(active)` and
+ * `finished()`, `renderKeyframe(view, width, height, chooseIterations)`, `rectIn(source, view)`, `clear()`,
+ * `drawFrom(source, view, alpha)`, `keyframeScale()` at most, `lastRenderSeconds()` of the
+ * last full render at the canvas size, `speed()`, `onChange(active)` and
  * `onEnd()`, called on reaching the deepest zoom.
  */
 export function createAutoZoom(host) {
@@ -43,6 +53,8 @@ export function createAutoZoom(host) {
     let manualUntil = 0;
     let shown = null;
     let fading = null;
+    let scale = 1;
+    let rendered = 0;
 
     function viewAt(z) {
         const segment = path.findLast((segment) => segment.zoom <= z) ?? path[0];
@@ -61,6 +73,13 @@ export function createAutoZoom(host) {
         if (current > 0) path = path.slice(current);
     }
 
+    // Scales keyframes so they take about as long to render as the zoom takes to double
+    function keyframeScale(seconds, current = 1) {
+        const budget = 1 / host.speed();
+        const scale = seconds > 0 ? current * Math.sqrt(budget / seconds) : host.keyframeScale();
+        return Math.min(Math.max(scale, MIN_KEYFRAME_SCALE), host.keyframeScale());
+    }
+
     function covers(frame, view) {
         const rect = host.rectIn(frame, view);
         return rect.x >= 0 && rect.y >= 0
@@ -68,9 +87,6 @@ export function createAutoZoom(host) {
             && rect.y + rect.height <= frame.canvas.height;
     }
 
-    function magnification(frame, view) {
-        return host.size().width / host.rectIn(frame, view).width;
-    }
 
     function bestFor(view) {
         return keyframes.findLast((frame) => covers(frame, view)) ?? null;
@@ -81,7 +97,7 @@ export function createAutoZoom(host) {
         lastTime = time;
         let next = Math.min(zoom * 2 ** (host.speed() * dt), maxZoom());
         let best = bestFor(viewAt(next));
-        if (!best || magnification(best, viewAt(next)) > MAX_MAGNIFICATION) {
+        if (!best || next / best.view.zoom > MAX_STRETCH) {
             next = zoom;
             best = bestFor(viewAt(zoom)) ?? shown;
         }
@@ -114,11 +130,15 @@ export function createAutoZoom(host) {
         pending = true;
         const started = epoch;
         const { width, height } = host.size();
-        const scale = host.keyframeScale();
         const view = viewAt(Math.min(Math.max(deepest, zoom) * AHEAD, maxZoom()));
-        host.renderKeyframe(view, Math.round(width * scale), Math.round(height * scale)).then((finished) => {
+        const since = performance.now();
+        const choose = rendered++ % CHOOSE_ITERATIONS_EVERY === 0;
+        host.renderKeyframe(view, Math.round(width * scale), Math.round(height * scale), choose).then((finished) => {
             if (!active || started !== epoch) return;
             pending = false;
+            // Render time grows with the pixel count, so with the square of the scale
+            const seconds = (performance.now() - since) / 1000;
+            scale = keyframeScale(seconds, scale);
             keyframes.push(finished);
             // Only keyframes at least as deep as the one covering the zoom are still useful
             const covering = keyframes.findLastIndex((frame) => frame.view.zoom <= zoom);
@@ -150,6 +170,19 @@ export function createAutoZoom(host) {
         context.imageSmoothingQuality = 'high';
         context.drawImage(frame.canvas, 0, 0, columns, rows);
         const pixels = context.getImageData(0, 0, columns, rows).data;
+        const at = (x, y) => 4 * (y * columns + x);
+        const white = (x, y) => Math.min(pixels[at(x, y)], pixels[at(x, y) + 1], pixels[at(x, y) + 2]) >= WHITE;
+        const whiteNear = (x, y) => {
+            let count = 0;
+            let total = 0;
+            for (let ny = Math.max(y - WHITE_NEIGHBORHOOD, 0); ny <= Math.min(y + WHITE_NEIGHBORHOOD, rows - 1); ny++) {
+                for (let nx = Math.max(x - WHITE_NEIGHBORHOOD, 0); nx <= Math.min(x + WHITE_NEIGHBORHOOD, columns - 1); nx++) {
+                    count += white(nx, ny);
+                    total++;
+                }
+            }
+            return count / total;
+        };
 
         // Keyframes span the view's width at any resolution
         const cell = (host.pixelSize(frame.view) * host.size().width) / columns;
@@ -162,14 +195,13 @@ export function createAutoZoom(host) {
             for (let x = 0; x < columns - 1; x++) {
                 const distance = Math.hypot(x + 0.5 - centerX, y + 0.5 - centerY);
                 if (distance > radius) continue;
-                const at = (x, y) => 4 * (y * columns + x);
                 let contrast = 0;
                 for (let channel = 0; channel < 3; channel++) {
                     const value = pixels[at(x, y) + channel];
                     contrast += Math.abs(value - pixels[at(x + 1, y) + channel]);
                     contrast += Math.abs(value - pixels[at(x, y + 1) + channel]);
                 }
-                const score = contrast * Math.exp(-(((2 * distance) / radius) ** 2));
+                const score = contrast * (1 - whiteNear(x, y)) ** WHITE_PENALTY * Math.exp(-(((2 * distance) / radius) ** 2));
                 if (score > bestScore) {
                     bestScore = score;
                     best = { x: x + 0.5, y: y + 0.5 };
@@ -193,6 +225,8 @@ export function createAutoZoom(host) {
         shown = keyframes[0] ?? null;
         fading = null;
         pending = false;
+        scale = keyframeScale(host.lastRenderSeconds());
+        rendered = 0;
         epoch++;
         manualUntil = 0;
         if (finished) steer(finished);
