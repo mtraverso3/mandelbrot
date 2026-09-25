@@ -43,6 +43,33 @@ impl GpuViewer {
         generation.set(generation.get().wrapping_add(1));
     }
 
+    /// Resolves to the iteration limit the view needs, or `undefined` if a later call
+    /// cancelled it.
+    #[wasm_bindgen(js_name = autoIterations)]
+    pub fn auto_iterations(
+        &self,
+        center_x: &str,
+        center_y: &str,
+        zoom: f64,
+        width: u32,
+        height: u32,
+    ) -> Result<js_sys::Promise, JsError> {
+        let view = viewport(center_x, center_y, zoom)?;
+        self.cancel();
+        let inner = self.inner.clone();
+        let generation = inner.generation.get();
+        Ok(wasm_bindgen_futures::future_to_promise(async move {
+            let limit = inner
+                .gpu
+                .auto_iterations_async(&view, width, height, || {
+                    inner.generation.get() != generation
+                })
+                .await
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            Ok(limit.map_or(JsValue::UNDEFINED, |limit| (limit as u32).into()))
+        }))
+    }
+
     /// Calls `on_rows(firstRow, rgba)` for each band as it finishes. Resolves to whether the
     /// render finished, rather than being cancelled by a later one.
     #[allow(clippy::too_many_arguments)]

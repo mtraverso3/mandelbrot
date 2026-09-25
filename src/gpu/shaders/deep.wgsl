@@ -68,6 +68,9 @@ fn deep_step(state_in: State, index: u32, pixel: vec2<f32>) -> State {
         let range = bla_levels[level];
         let skip = bla[range.x + ((state.m - 1u) >> u32(level))];
         next = fx_add(fx_mul(skip.a_mantissa, skip.a_exponent, delta), fx_mul(skip.b_mantissa, skip.b_exponent, dc));
+        if DETECT_INTERIOR && contract(&state, skip.a_mantissa, skip.a_exponent) {
+            return finish_interior(state, index);
+        }
         if TRACK_DERIVATIVE {
             let derivative = Fx(state.derivative, state.exponent);
             let skipped = fx_normalize(fx_add(
@@ -87,6 +90,9 @@ fn deep_step(state_in: State, index: u32, pixel: vec2<f32>) -> State {
             samples[index] = Sample(state.n, norm_sqr, normal(z, state.derivative));
             state.done = 1u;
             return state;
+        }
+        if DETECT_INTERIOR && state.n > 0u && contract(&state, 2.0 * z, 0) {
+            return finish_interior(state, index);
         }
         if TRACK_DERIVATIVE {
             state.derivative = 2.0 * mul(state.derivative, z) + vec2(exp2_neg(state.exponent), 0.0);

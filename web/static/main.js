@@ -92,12 +92,18 @@ function onGpuMessage(message) {
     if (message.generation !== generation) return;
     if (message.kind === 'band') {
         drawBand(message);
+    } else if (message.kind === 'iterations') {
+        onIterations(message.iterations);
     } else if (message.kind === 'failed') {
         console.warn(`GPU render failed, switching to the CPU: ${message.reason}`);
         gpu.ready = false;
-        job.onGpu = false;
         updateControls();
-        dispatchJob();
+        if (job.choosing) {
+            chooseIterations();
+        } else {
+            job.onGpu = false;
+            dispatchJob();
+        }
     }
 }
 
@@ -138,14 +144,29 @@ function stopRendering() {
 function render() {
     stopRendering();
     if (state.autoIterations) {
-        job = { choosing: true };
-        const { width, height } = canvas;
-        queue = [{ generation, kind: 'iterations', view: state.view, width, height }];
+        job = { choosing: true, onGpu: usesGpu() };
+        chooseIterations();
         updateStatus();
-        dispatch();
     } else {
         renderBands();
     }
+}
+
+function chooseIterations() {
+    const { width, height } = canvas;
+    const task = { generation, kind: 'iterations', view: state.view, width, height };
+    if (usesGpu()) {
+        gpu.worker.postMessage(task);
+    } else {
+        queue = [task];
+        dispatch();
+    }
+}
+
+function onIterations(iterations) {
+    state.iterations = iterations;
+    updateControls();
+    renderBands();
 }
 
 function renderBands() {
@@ -195,9 +216,7 @@ function dispatchJob() {
 function onBand(worker, band) {
     idle.push(worker);
     if (band.generation === generation && band.kind === 'iterations') {
-        state.iterations = band.iterations;
-        updateControls();
-        renderBands();
+        onIterations(band.iterations);
     } else if (band.generation === generation) {
         drawBand(band);
     }
@@ -443,7 +462,7 @@ function updateStatus() {
         return;
     }
     if (job.choosing) {
-        status.textContent = 'Choosing iteration limit…';
+        status.textContent = `Choosing iteration limit on ${job.onGpu ? 'GPU' : 'CPU'}…`;
         return;
     }
     const size = `${job.width}×${job.height}`;

@@ -5,7 +5,10 @@ mod buffers;
 mod tests;
 
 use crate::ReferenceOrbit;
-use crate::render::{PERTURBATION_ZOOM, Renderer, Shading};
+use crate::render::{
+    MAX_AUTO_ITERATIONS, PERTURBATION_ZOOM, PROBE_COLUMNS, RenderOptions, Renderer, Shading,
+    UNDECIDED_FRACTION, Viewport, probe_rows,
+};
 use buffers::{Buffers, Params, Sample};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -17,6 +20,8 @@ const DEEP_ZOOM: f64 = 1e30;
 /// and bulb in f32 can only misjudge pixels right on their boundary.
 const BULB_CHECK_ZOOM: f64 = 1e3;
 const WORKGROUP_SIZE: u32 = 8;
+/// The sample of a pixel that is neither escaped nor known to be interior.
+const UNDECIDED: u32 = u32::MAX - 1;
 
 const SHADER: &str = concat!(
     include_str!("shaders/bindings.wgsl"),
@@ -65,6 +70,7 @@ struct Variant {
     skip: bool,
     track_derivative: bool,
     deep: bool,
+    detect_interior: bool,
 }
 
 impl Variant {
@@ -76,11 +82,19 @@ impl Variant {
             skip: zoom >= PERTURBATION_ZOOM,
             track_derivative: renderer.options().shading == Shading::Normal,
             deep: zoom > DEEP_ZOOM,
+            detect_interior: false,
         }
     }
 
     fn index(self) -> usize {
-        self.deep as usize * 4 + self.skip as usize * 2 + self.track_derivative as usize
+        [
+            self.deep,
+            self.detect_interior,
+            self.skip,
+            self.track_derivative,
+        ]
+        .into_iter()
+        .fold(0, |index, flag| index * 2 + flag as usize)
     }
 }
 
@@ -88,8 +102,7 @@ impl Variant {
 #[derive(Clone, Copy, PartialEq)]
 enum Output {
     Rgba,
-    /// Raw escapes, which tests compare against exact iteration
-    #[cfg_attr(not(test), expect(dead_code))]
+    /// Raw escapes, for probing and for comparing against exact iteration in tests
     Samples,
 }
 
@@ -100,7 +113,7 @@ pub struct GpuRenderer {
     bind_group_layout: wgpu::BindGroupLayout,
     layout: wgpu::PipelineLayout,
     /// Built on first use, indexed by [`Variant::index`].
-    iterate: [OnceLock<wgpu::ComputePipeline>; 8],
+    iterate: [OnceLock<wgpu::ComputePipeline>; 16],
     color: wgpu::ComputePipeline,
     adapter_name: String,
 }
@@ -182,6 +195,7 @@ impl GpuRenderer {
                 ("SKIP", variant.skip as u8 as f64),
                 ("TRACK_DERIVATIVE", variant.track_derivative as u8 as f64),
                 ("DEEP", variant.deep as u8 as f64),
+                ("DETECT_INTERIOR", variant.detect_interior as u8 as f64),
             ];
             compute_pipeline(
                 &self.device,
@@ -198,10 +212,69 @@ impl GpuRenderer {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub fn auto_iterations(
+        &self,
+        view: &Viewport,
+        width: u32,
+        height: u32,
+    ) -> Result<usize, GpuError> {
+        let limit = pollster::block_on(self.auto_iterations_async(view, width, height, || false))?;
+        Ok(limit.expect("never cancelled"))
+    }
+
+    /// [`crate::auto_iterations`], probing on the GPU. Returns `Ok(None)` if `cancelled`
+    /// returned true first.
+    pub async fn auto_iterations_async(
+        &self,
+        view: &Viewport,
+        width: u32,
+        height: u32,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Option<usize>, GpuError> {
+        let rows = probe_rows(width, height);
+        let mut limit = RenderOptions::default().max_iterations;
+        while limit * 4 <= MAX_AUTO_ITERATIONS {
+            let opts = RenderOptions {
+                width: PROBE_COLUMNS as u32,
+                height: rows as u32,
+                max_iterations: limit,
+                shading: Shading::Flat,
+            };
+            let renderer = Renderer::unprobed(view, &opts);
+            let variant = Variant {
+                detect_interior: true,
+                ..Variant::new(&renderer)
+            };
+            let mut undecided = 0;
+            let finished = self
+                .run(
+                    &renderer,
+                    variant,
+                    CHUNKING,
+                    Output::Samples,
+                    &cancelled,
+                    &mut |_, bytes| {
+                        let samples = bytemuck::pod_collect_to_vec::<u8, Sample>(bytes);
+                        undecided += samples.iter().filter(|s| s.iterations == UNDECIDED).count();
+                    },
+                )
+                .await?;
+            if !finished {
+                return Ok(None);
+            }
+            if undecided as f64 <= UNDECIDED_FRACTION * (PROBE_COLUMNS * rows) as f64 {
+                break;
+            }
+            limit *= 4;
+        }
+        Ok(Some(limit))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn render(
         &self,
-        view: &crate::Viewport,
-        opts: &crate::RenderOptions,
+        view: &Viewport,
+        opts: &RenderOptions,
     ) -> Result<image::RgbImage, GpuError> {
         use rayon::prelude::*;
         let renderer = Renderer::new(view, opts);

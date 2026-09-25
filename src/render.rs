@@ -76,13 +76,13 @@ pub(crate) const ESCAPE_RADIUS_SQR: f64 = 100.0 * 100.0;
 pub const PERTURBATION_ZOOM: f64 = 1e10;
 pub const MAX_ZOOM: f64 = 1e250;
 const LANES: usize = 8;
-const PROBE_COLUMNS: usize = 64;
+pub(crate) const PROBE_COLUMNS: usize = 64;
 const MIN_BANDS: f64 = 4.0;
 const MAX_BANDS: f64 = 48.0;
 const ANCHOR_POSITION: f64 = 4.0;
 const MIN_PROBE_ESCAPES: usize = 32;
 pub const MAX_AUTO_ITERATIONS: usize = 400_000;
-const UNDECIDED_FRACTION: f64 = 0.01;
+pub(crate) const UNDECIDED_FRACTION: f64 = 0.01;
 const CYCLE_CHECK_START: usize = 16;
 pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
@@ -116,13 +116,19 @@ pub fn auto_iterations(view: &Viewport, width: u32, height: u32) -> usize {
             shading: Shading::Flat,
         };
         let renderer = Renderer::new(view, &opts);
-        let points = PROBE_COLUMNS * renderer.probe_rows();
+        let points = PROBE_COLUMNS * probe_rows(width, height);
         if renderer.undecided as f64 <= UNDECIDED_FRACTION * points as f64 {
             break;
         }
         limit *= 4;
     }
     limit
+}
+
+/// Rows of the grid of points that choose color bands and iteration limits.
+pub(crate) fn probe_rows(width: u32, height: u32) -> usize {
+    let aspect = height as f64 / width as f64;
+    ((PROBE_COLUMNS as f64 * aspect).round() as usize).clamp(1, 4 * PROBE_COLUMNS)
 }
 
 pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
@@ -198,8 +204,7 @@ impl Renderer {
     }
 
     fn probe_rows(&self) -> usize {
-        let aspect = self.opts.height as f64 / self.opts.width as f64;
-        ((PROBE_COLUMNS as f64 * aspect).round() as usize).clamp(1, 4 * PROBE_COLUMNS)
+        probe_rows(self.opts.width, self.opts.height)
     }
 
     fn probe(&self) -> Vec<Outcome> {
@@ -295,6 +300,26 @@ impl Renderer {
 
 #[cfg(feature = "gpu")]
 impl Renderer {
+    /// A renderer without color bands or a reference orbit, for probing on the GPU. Its
+    /// pixels are the probe's points: one at the center of each cell of the grid.
+    pub(crate) fn unprobed(view: &Viewport, opts: &RenderOptions) -> Self {
+        let mut frame = Frame::new(view, opts);
+        frame.left -= 0.5;
+        frame.top -= 0.5;
+        Self {
+            view: view.clone(),
+            opts: *opts,
+            frame,
+            orbit: None,
+            undecided: 0,
+        }
+    }
+
+    /// Where the view's center lies, in pixels from the top left.
+    pub(crate) fn origin(&self) -> (f64, f64) {
+        (self.frame.left, self.frame.top)
+    }
+
     pub(crate) fn options(&self) -> &RenderOptions {
         &self.opts
     }

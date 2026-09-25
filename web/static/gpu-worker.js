@@ -21,6 +21,11 @@ self.onmessage = async ({ data: job }) => {
     }
     const { generation, view, iterations, normal } = job;
     try {
+        if (job.kind === 'iterations') {
+            const limit = await viewer.autoIterations(view.x, view.y, view.zoom, job.width, job.height);
+            if (limit !== undefined) self.postMessage({ kind: 'iterations', generation, iterations: limit });
+            return;
+        }
         for (const { pass, width, height } of job.passes) {
             const finished = await viewer.render(
                 view.x, view.y, view.zoom,
