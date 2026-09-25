@@ -1,8 +1,9 @@
 //! Host-side mirrors of the shader's structs, and the buffers one render binds.
 
-use super::{BULB_CHECK_ZOOM, GpuRenderer};
+use super::GpuRenderer;
 use crate::ReferenceOrbit;
-use crate::render::{Renderer, Shading};
+use crate::perturbation::{fixed_to_f64, precision_bits};
+use crate::render::{PERTURBATION_ZOOM, Renderer, Shading, Viewport};
 use bytemuck::{Pod, Zeroable};
 use wgpu::BufferUsages as Usage;
 use wgpu::util::DeviceExt;
@@ -27,7 +28,6 @@ pub(super) struct Params {
     pub(super) first_slice: u32,
     bla_levels: u32,
     max_skip_radius_sqr: f32,
-    center: [f32; 2],
     check_bulbs: u32,
     normal_shading: u32,
     light: [f32; 2],
@@ -36,7 +36,9 @@ pub(super) struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
-    _padding: u32,
+    _padding: [u32; 3],
+    cardioid: [f32; 4],
+    bulb: [f32; 4],
 }
 
 impl Params {
@@ -48,6 +50,7 @@ impl Params {
         let light = renderer.light();
         let (pixel_mantissa, pixel_exponent) = split(renderer.pixel_size());
         let (left, top) = renderer.origin();
+        let (cardioid, bulb) = bulb_terms(view);
         Self {
             width: opts.width,
             first_row: 0,
@@ -61,8 +64,8 @@ impl Params {
             first_slice: 1,
             bla_levels: orbit.bla().levels().len() as u32,
             max_skip_radius_sqr: max_skip_radius_sqr(orbit),
-            center: [view.center_x.to_f64() as f32, view.center_y.to_f64() as f32],
-            check_bulbs: (view.zoom < BULB_CHECK_ZOOM) as u32,
+            // As on the CPU, whose perturbation renderer has no such test
+            check_bulbs: (view.zoom < PERTURBATION_ZOOM) as u32,
             normal_shading: (opts.shading == Shading::Normal) as u32,
             light: [light.0 as f32, light.1 as f32],
             inv_band_scale: (1.0 / band_scale) as f32,
@@ -70,9 +73,33 @@ impl Params {
             band_phase: band_phase.rem_euclid(PALETTE_SIZE) as f32,
             pixel_mantissa,
             pixel_exponent,
-            _padding: 0,
+            _padding: [0; 3],
+            cardioid,
+            bulb,
         }
     }
+}
+
+/// The terms of the main cardioid and period-2 bulb tests that depend only on the view's
+/// center, computed exactly: `[q0 (q0 + s0) - y0^2 / 4, q0, s0, y0]` with `s0 = x0 - 1/4` and
+/// `q0 = s0^2 + y0^2`, and `[(x0 + 1)^2 + y0^2 - 1/16, x0 + 1, y0, 0]`.
+fn bulb_terms(view: &Viewport) -> ([f32; 4], [f32; 4]) {
+    let bits = precision_bits(view.zoom) + 64;
+    let shift = bits as usize;
+    let one = num_bigint::BigInt::from(1) << shift;
+    let x = view.center_x.to_fixed(bits);
+    let y = view.center_y.to_fixed(bits);
+    let square = |v: &num_bigint::BigInt| (v * v) >> shift;
+    let s = &x - (&one >> 2usize);
+    let q = square(&s) + square(&y);
+    let cardioid = ((&q * (&q + &s)) >> shift) - (square(&y) >> 2usize);
+    let x1 = &x + &one;
+    let bulb = square(&x1) + square(&y) - (&one >> 4usize);
+    let f = |v: &num_bigint::BigInt| fixed_to_f64(v, bits) as f32;
+    (
+        [f(&cardioid), f(&q), f(&s), f(&y)],
+        [f(&bulb), f(&x1), f(&y), 0.0],
+    )
 }
 
 /// Blocks are never valid further out than their first half, so the largest radius on the

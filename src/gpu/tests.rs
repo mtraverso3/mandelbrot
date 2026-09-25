@@ -306,3 +306,55 @@ fn auto_iterations_match_the_cpu() {
         }
     }
 }
+
+/// With one iteration, only the main cardioid and bulb test can make a pixel interior.
+#[test]
+fn bulb_test_matches_the_cpu_on_their_boundaries() {
+    let gpu = GpuRenderer::new().unwrap();
+    let points = [
+        (
+            "0.37418786207085545544986036109667884930765540307786",
+            "0.19341113569752782947724619433721328913571778753720",
+        ),
+        (
+            "-0.86492442353296507064976584813925584906692239484552",
+            "0.21036774620197412666312558040757474990564076519959",
+        ),
+    ];
+    for (x, y) in points {
+        for zoom in [1e4, 1e7, 1e9] {
+            let view = Viewport {
+                center_x: x.parse().unwrap(),
+                center_y: y.parse().unwrap(),
+                zoom,
+            };
+            let opts = RenderOptions {
+                width: 64,
+                height: 48,
+                max_iterations: 1,
+                shading: Shading::Flat,
+            };
+            let renderer = Renderer::unprobed(&view, &opts);
+            let actual = samples(&gpu, &renderer, Variant::new(&renderer), CHUNKING);
+            let size = renderer.pixel_size();
+            let (cx, cy) = (view.center_x.to_f64(), view.center_y.to_f64());
+            let (left, top) = renderer.origin();
+            let mut inside = 0;
+            for (i, sample) in actual.iter().enumerate() {
+                let dx = ((i % 64) as f64 - left) * size;
+                let dy = ((i / 64) as f64 - top) * size;
+                let expected = crate::render::in_main_cardioid_or_bulb(cx + dx, cy + dy);
+                assert_eq!(
+                    sample.iterations == u32::MAX,
+                    expected,
+                    "pixel {i} at zoom {zoom:e}"
+                );
+                inside += expected as usize;
+            }
+            assert!(
+                (1..actual.len()).contains(&inside),
+                "boundary should cross the view"
+            );
+        }
+    }
+}

@@ -16,9 +16,6 @@ use std::sync::{Arc, OnceLock};
 /// Past this, pixel offsets approach the smallest normal f32, so they start out with a
 /// separate exponent.
 const DEEP_ZOOM: f64 = 1e30;
-/// Up to here pixels are several f32 steps apart, so testing points against the main cardioid
-/// and bulb in f32 can only misjudge pixels right on their boundary.
-const BULB_CHECK_ZOOM: f64 = 1e3;
 const WORKGROUP_SIZE: u32 = 8;
 /// The sample of a pixel that is neither escaped nor known to be interior.
 const UNDECIDED: u32 = u32::MAX - 1;

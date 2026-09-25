@@ -13,7 +13,6 @@ struct Params {
     first_slice: u32,
     bla_levels: u32,
     max_skip_radius_sqr: f32,
-    center: vec2<f32>,
     check_bulbs: u32,
     normal_shading: u32,
     light: vec2<f32>,
@@ -22,6 +21,10 @@ struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
+    // The main cardioid's and period-2 bulb's equations expanded around the view's center,
+    // so each pixel only adds small terms in its offset: see `in_main_cardioid_or_bulb`
+    cardioid: vec4<f32>,
+    bulb: vec4<f32>,
 }
 
 // Past f32 range, values are also kept as mantissa * 2^exponent

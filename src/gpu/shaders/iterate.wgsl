@@ -37,7 +37,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
             CYCLE_CHECK_START,
             0u,
         );
-        if params.check_bulbs != 0u && in_main_cardioid_or_bulb(params.center + dc) {
+        if params.check_bulbs != 0u && in_main_cardioid_or_bulb(dc) {
             samples[index] = Sample(INTERIOR, 0.0, vec2(0.0));
             state.done = 1u;
             states[index] = state;
@@ -192,11 +192,18 @@ fn normal(z: vec2<f32>, derivative: vec2<f32>) -> vec2<f32> {
     return u / length(u);
 }
 
-fn in_main_cardioid_or_bulb(c: vec2<f32>) -> bool {
-    let y2 = c.y * c.y;
-    let shifted = c.x - 0.25;
-    let q = shifted * shifted + y2;
-    let in_cardioid = q * (q + shifted) <= 0.25 * y2;
-    let in_period2_bulb = (c.x + 1.0) * (c.x + 1.0) + y2 <= 0.0625;
-    return in_cardioid || in_period2_bulb;
+/// The CPU renderer's test, for the point `d` from the view's center. With the center's terms
+/// computed exactly on the host, f32 rounding only touches terms the size of the offset.
+fn in_main_cardioid_or_bulb(d: vec2<f32>) -> bool {
+    // q (q + x - 1/4) - y^2 / 4 <= 0, with q = (x - 1/4)^2 + y^2 = q0 + q1
+    let c = params.cardioid;
+    let q0 = c.y;
+    let s0 = c.z;
+    let y0 = c.w;
+    let q1 = 2.0 * (s0 * d.x + y0 * d.y) + dot(d, d);
+    let cardioid = c.x + (q0 * (q1 + d.x) + q1 * (q0 + s0 + q1 + d.x) - (2.0 * y0 * d.y + d.y * d.y) * 0.25);
+    // (x + 1)^2 + y^2 - 1/16 <= 0
+    let b = params.bulb;
+    let bulb = b.x + (2.0 * (b.y * d.x + b.z * d.y) + dot(d, d));
+    return cardioid <= 0.0 || bulb <= 0.0;
 }
