@@ -8,7 +8,8 @@ mod resample;
 pub use coordinate::{Coordinate, ParseCoordinateError};
 pub use perturbation::ReferenceOrbit;
 pub use render::{
-    MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport, render, render_rows,
+    MAX_AUTO_ITERATIONS, MAX_ZOOM, PERTURBATION_ZOOM, RenderOptions, Renderer, Shading, Viewport,
+    auto_iterations, render, render_rows,
 };
 pub use resample::resize_lanczos3;
 

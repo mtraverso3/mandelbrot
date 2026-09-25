@@ -1,6 +1,6 @@
 use clap::Parser;
 use image::{ImageFormat, Rgb, RgbImage};
-use mandelbrot::{RenderOptions, Shading, Viewport, downsample, preset, render};
+use mandelbrot::{RenderOptions, Shading, Viewport, auto_iterations, downsample, preset, render};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -96,6 +96,9 @@ enum Workload {
     },
     EncodePng,
     Downsample,
+    AutoIterations {
+        view: Viewport,
+    },
 }
 
 struct Scenario {
@@ -123,6 +126,18 @@ fn render_scenario(location: &str, shading: Shading) -> Scenario {
             threads: None,
         },
         max_samples: usize::MAX,
+    }
+}
+
+fn deep_seahorse() -> Viewport {
+    Viewport {
+        center_x: "-1.24949889563508492587065068503213228909045011806661"
+            .parse()
+            .unwrap(),
+        center_y: "0.03033300303590165779311010118330780526875599532123"
+            .parse()
+            .unwrap(),
+        zoom: 4.7374e16,
     }
 }
 
@@ -156,15 +171,7 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "render/deep-seahorse/normal".into(),
         workload: Workload::Render {
-            view: Viewport {
-                center_x: "-1.24949889563508492587065068503213228909045011806661"
-                    .parse()
-                    .unwrap(),
-                center_y: "0.03033300303590165779311010118330780526875599532123"
-                    .parse()
-                    .unwrap(),
-                zoom: 4.7374e16,
-            },
+            view: deep_seahorse(),
             opts: RenderOptions {
                 width: 320,
                 height: 256,
@@ -203,6 +210,16 @@ fn scenarios() -> Vec<Scenario> {
         workload: Workload::Downsample,
         max_samples: usize::MAX,
     });
+    for (location, view) in [
+        ("mini-mandelbrot", preset("mini-mandelbrot").unwrap()),
+        ("deep-seahorse", deep_seahorse()),
+    ] {
+        list.push(Scenario {
+            name: format!("auto-iterations/{location}"),
+            workload: Workload::AutoIterations { view },
+            max_samples: usize::MAX,
+        });
+    }
     list
 }
 
@@ -321,6 +338,15 @@ fn run(scenario: &Scenario, cli: &Cli, machine: &Machine, full_res: &mut Option<
                     img.height(),
                     bytes.len() / 1024
                 ),
+            )
+        }
+        Workload::AutoIterations { view } => {
+            let (width, height) = BENCH_SIZE;
+            let (durations, iterations) = time(sampling, || auto_iterations(view, width, height));
+            (
+                durations,
+                None,
+                format!("{width}x{height} view, chose {iterations} iterations"),
             )
         }
         Workload::Downsample => {

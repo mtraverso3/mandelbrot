@@ -76,6 +76,30 @@ label {
     font-size: 12px;
 }
 
+.field {
+    display: grid;
+    gap: 4px;
+}
+
+.iterations {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.checkbox input {
+    margin: 0;
+}
+
 select, input, button {
     font: inherit;
     color: var(--text);

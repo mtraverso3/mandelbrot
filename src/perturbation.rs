@@ -1,10 +1,12 @@
 use crate::bla;
-use crate::render::{BASE_VIEW_WIDTH, ESCAPE_RADIUS_SQR, Escape};
+use crate::render::{BASE_VIEW_WIDTH, ESCAPE_RADIUS_SQR, Escape, Outcome};
 use crate::{Coordinate, Viewport};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
 
 const GUARD_BITS: u32 = 96;
+const INTERIOR_CONTRACTION: f64 = 1e-6;
+const CONTRACTION_CAP: f64 = 1e100;
 
 #[derive(Debug)]
 pub struct ReferenceOrbit {
@@ -83,19 +85,27 @@ impl ReferenceOrbit {
         dci: f64,
         max_iterations: usize,
     ) -> Option<Escape> {
-        self.escape_with::<TRACK_DERIVATIVE, true>(dcr, dci, max_iterations)
+        match self.iterate::<TRACK_DERIVATIVE, true, false>(dcr, dci, max_iterations) {
+            Outcome::Escaped(escape) => Some(escape),
+            _ => None,
+        }
     }
 
-    fn escape_with<const TRACK_DERIVATIVE: bool, const SKIP: bool>(
+    pub(crate) fn classify(&self, dcr: f64, dci: f64, max_iterations: usize) -> Outcome {
+        self.iterate::<false, true, true>(dcr, dci, max_iterations)
+    }
+
+    fn iterate<const TRACK_DERIVATIVE: bool, const SKIP: bool, const DETECT_INTERIOR: bool>(
         &self,
         dcr: f64,
         dci: f64,
         max_iterations: usize,
-    ) -> Option<Escape> {
+    ) -> Outcome {
         let orbit = &self.points;
         let last = orbit.len() - 1;
         let (mut dr, mut di) = (0.0f64, 0.0f64);
         let (mut der_r, mut der_i) = (1.0f64, 0.0f64);
+        let mut contraction = Contraction::new();
         let mut m = 0;
         let mut n = 0;
 
@@ -114,6 +124,9 @@ impl ReferenceOrbit {
                         step.a.0 * der_i + step.a.1 * der_r + step.b.1,
                     );
                 }
+                if DETECT_INTERIOR && contraction.multiply(step.a) {
+                    return Outcome::Interior;
+                }
                 m += length;
                 n += length;
                 continue;
@@ -124,12 +137,15 @@ impl ReferenceOrbit {
             let zi = ref_i + di;
             let norm_sqr = zr * zr + zi * zi;
             if norm_sqr > ESCAPE_RADIUS_SQR {
-                return Some(Escape {
+                return Outcome::Escaped(Escape {
                     iterations: n,
                     norm_sqr,
                     z: (zr, zi),
                     derivative: rescale(der_r, der_i),
                 });
+            }
+            if DETECT_INTERIOR && n > 0 && contraction.multiply((2.0 * zr, 2.0 * zi)) {
+                return Outcome::Interior;
             }
             if TRACK_DERIVATIVE {
                 let (d2r, d2i) = (der_r * 2.0, der_i * 2.0);
@@ -149,7 +165,33 @@ impl ReferenceOrbit {
             m += 1;
             n += 1;
         }
-        None
+        Outcome::Undecided
+    }
+}
+
+/// The product of 2z along an orbit, from z_1: it shrinks towards zero only when the orbit is
+/// drawn into an attracting cycle, i.e. the point is inside the set.
+pub(crate) struct Contraction(f64, f64);
+
+impl Contraction {
+    pub(crate) fn new() -> Self {
+        Self(1.0, 0.0)
+    }
+
+    /// Multiplies in `factor`, returning whether the orbit is now known to be interior.
+    pub(crate) fn multiply(&mut self, factor: (f64, f64)) -> bool {
+        let (r, i) = (
+            self.0 * factor.0 - self.1 * factor.1,
+            self.0 * factor.1 + self.1 * factor.0,
+        );
+        let norm_sqr = r * r + i * i;
+        let scale = if norm_sqr > CONTRACTION_CAP * CONTRACTION_CAP {
+            CONTRACTION_CAP / norm_sqr.sqrt()
+        } else {
+            1.0
+        };
+        (self.0, self.1) = (r * scale, i * scale);
+        norm_sqr < INTERIOR_CONTRACTION * INTERIOR_CONTRACTION
     }
 }
 
@@ -175,6 +217,13 @@ fn fixed_to_f64(value: &BigInt, frac_bits: u32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn iterations(outcome: Outcome) -> Option<usize> {
+        match outcome {
+            Outcome::Escaped(escape) => Some(escape.iterations),
+            _ => None,
+        }
+    }
 
     fn exact_escape(view: &Viewport, dx: f64, dy: f64, max_iterations: usize) -> Option<usize> {
         let frac_bits = precision_bits(view.zoom) + 64;
@@ -210,13 +259,16 @@ mod tests {
                 let dx = (x as f64 - size as f64 / 2.0) * pixel;
                 let dy = (y as f64 - size as f64 / 2.0) * pixel;
                 let exact = exact_escape(view, dx, dy, max_iterations);
-                let plain = orbit
-                    .escape_with::<true, false>(dx, dy, max_iterations)
-                    .map(|e| e.iterations);
-                let skipped = orbit
-                    .escape_with::<true, true>(dx, dy, max_iterations)
-                    .map(|e| e.iterations);
+                let plain = iterations(orbit.iterate::<true, false, false>(dx, dy, max_iterations));
+                let skipped =
+                    iterations(orbit.iterate::<true, true, false>(dx, dy, max_iterations));
                 assert_eq!(plain, exact, "pixel ({x}, {y})");
+                if let Outcome::Interior = orbit.classify(dx, dy, max_iterations) {
+                    assert_eq!(
+                        exact, None,
+                        "pixel ({x}, {y}) wrongly classified as interior"
+                    );
+                }
                 skip_mismatches += (skipped != exact) as usize;
                 distinct.insert(exact);
             }

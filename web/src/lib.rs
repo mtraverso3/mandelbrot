@@ -111,6 +111,18 @@ pub fn normalize_coordinate(value: &str) -> Option<String> {
     value.parse::<Coordinate>().ok().map(|c| c.to_string())
 }
 
+#[wasm_bindgen(js_name = autoIterations)]
+pub fn auto_iterations(
+    center_x: &str,
+    center_y: &str,
+    zoom: f64,
+    width: u32,
+    height: u32,
+) -> Result<u32, JsError> {
+    let view = viewport(center_x, center_y, zoom)?;
+    Ok(mandelbrot::auto_iterations(&view, width, height) as u32)
+}
+
 #[wasm_bindgen(js_name = maxZoom)]
 pub fn max_zoom() -> f64 {
     MAX_ZOOM
