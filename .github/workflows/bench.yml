@@ -17,80 +17,111 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  refs:
     runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
     steps:
+      - name: Resolve commit to compare against
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) sha="$PR_BASE" ;;
+            push) sha="$BEFORE" ;;
+            *) sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/master" --jq .sha) ;;
+          esac
+          if [ "$sha" = "$GITHUB_SHA" ] || [ -z "${sha//0/}" ]; then
+            sha=""
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Base commit: ${sha:-none}"
+
+  build:
+    needs: refs
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.side == 'base' }}
+    strategy:
+      matrix:
+        side: [head, base]
+    env:
+      REF: ${{ matrix.side == 'base' && needs.refs.outputs.base || github.sha }}
+    steps:
+      - name: Check for base commit
+        if: env.REF == ''
+        run: echo "No base commit to compare against"
+
       - uses: actions/checkout@v7
+        if: env.REF != ''
+        with:
+          ref: ${{ matrix.side == 'base' && env.REF || '' }}
 
       - uses: dtolnay/rust-toolchain@stable
+        if: env.REF != ''
         id: toolchain
 
+      - name: Hash bench sources
+        if: env.REF != ''
+        id: sources
+        run: echo "hash=$(git ls-tree -r HEAD -- Cargo.lock Cargo.toml src benches | sha256sum | cut -c1-40)" >> "$GITHUB_OUTPUT"
+
       - name: Restore bench binary
+        if: env.REF != ''
         id: binary
         uses: actions/cache@v6
         with:
           path: dist/bench
-          key: bench-bin-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'src/**', 'benches/**') }}
+          key: bench-bin-${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-${{ steps.sources.outputs.hash }}
 
       - uses: Swatinem/rust-cache@v2
-        if: steps.binary.outputs.cache-hit != 'true'
+        if: env.REF != '' && steps.binary.outputs.cache-hit != 'true'
 
       - name: Build bench binary
-        if: steps.binary.outputs.cache-hit != 'true'
+        if: env.REF != '' && steps.binary.outputs.cache-hit != 'true'
         run: |
           executable=$(cargo bench --bench render --no-run --message-format=json \
             | jq -r 'select(.target.name == "render" and .executable != null) | .executable')
           install -D "$executable" dist/bench
 
       - uses: actions/upload-artifact@v7
+        if: env.REF != ''
         with:
-          name: bench-bin
+          name: bench-bin-${{ matrix.side }}
           path: dist/bench
           retention-days: 1
 
-  baseline:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-    outputs:
-      run-id: ${{ steps.find.outputs.run-id }}
-    steps:
-      - name: Find latest successful master run
-        id: find
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow bench.yml --branch master \
-            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Baseline run: ${run_id:-none}"
-
   bench:
-    needs: [build, baseline]
+    needs: build
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: bench-bin
-          path: dist
+          name: bench-bin-head
+          path: dist/head
 
       - uses: actions/download-artifact@v8
-        if: needs.baseline.outputs.run-id != ''
         continue-on-error: true
         with:
-          name: bench-results
-          path: baseline
-          run-id: ${{ needs.baseline.outputs.run-id }}
-          github-token: ${{ github.token }}
+          name: bench-bin-base
+          path: dist/base
 
-      - name: Run benchmarks
+      - name: Run base benchmarks
+        if: hashFiles('dist/base/bench') != ''
+        continue-on-error: true
         run: |
-          chmod +x dist/bench
+          chmod +x dist/base/bench
+          dist/base/bench --out baseline
+
+      - name: Run head benchmarks
+        run: |
+          chmod +x dist/head/bench
           args=(--out bench-results)
           [ -f baseline/results.json ] && args+=(--baseline baseline)
-          dist/bench "${args[@]}"
+          dist/head/bench "${args[@]}"
 
       - name: Job summary
         run: |
