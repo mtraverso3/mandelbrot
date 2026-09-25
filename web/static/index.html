@@ -52,6 +52,14 @@
                 <button id="forward" type="button" title="Next view">Forward →</button>
                 <button id="zoom-out" type="button" title="Zoom out 2×">Zoom out</button>
                 <button id="reset" type="button" title="Back to the preset">Reset</button>
+                <div class="autozoom">
+                    <button id="autozoom" type="button" aria-pressed="false" title="Keep zooming into detail (Space); click the view to steer">▶ Auto zoom</button>
+                    <select id="zoom-speed" aria-label="Zoom speed" title="Zoom speed">
+                        <option value="0.35">Slow</option>
+                        <option value="0.7" selected>Normal</option>
+                        <option value="1.4">Fast</option>
+                    </select>
+                </div>
                 <div class="export">
                     <select id="export-scale" aria-label="Export size" title="Size of the saved image"></select>
                     <button id="download" type="button" title="Render the view at this size and save it as PNG">Download PNG</button>
@@ -64,7 +72,7 @@
             </dl>
             <p id="zoom-limit" hidden>This is the deepest supported zoom.</p>
             <p class="hint" id="deep-hint" hidden>Deep views need more iterations: raise the limit if the image is mostly white.</p>
-            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom · Arrow keys pan, + and − zoom, R resets</p>
+            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom · Arrow keys pan, + and − zoom, R resets · Space starts or stops the auto zoom, and clicking steers it</p>
             <p class="hint">On touch screens: drag to pan · Pinch to zoom · Tap to zoom in</p>
         </div>
     </aside>

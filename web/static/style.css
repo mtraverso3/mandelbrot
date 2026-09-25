@@ -137,11 +137,16 @@ button:disabled {
     gap: 6px;
 }
 
+.autozoom,
 .export {
     grid-column: span 2;
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 6px;
+}
+
+.autozoom {
+    grid-template-columns: 1fr auto;
 }
 
 #info {
