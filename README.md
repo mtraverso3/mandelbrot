@@ -55,5 +55,20 @@ mandelbrot-cli custom -x -0.75 -y 0.0 -z 1.0 -o custom.png
 ```
 
 
+## Benchmarks
+```bash
+# Run all scenarios, writing results, summary and images to target/bench
+cargo bench --bench render
+
+# Fewer samples, subset of scenarios, compared against a previous run
+cargo bench --bench render -- --samples 2 --filter spirals --baseline path/to/previous
+```
+
+The `Benchmark` workflow runs on every push and pull request. Its job summary shows timings and
+image diffs against the latest `master` run, and the `bench-results` artifact holds the rendered
+images. Pushes to `master` publish timing history to the `gh-pages` branch
+(charts at `https://<owner>.github.io/mandelbrot/dev/bench/` once GitHub Pages is enabled).
+
+
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE.txt) file for details.
