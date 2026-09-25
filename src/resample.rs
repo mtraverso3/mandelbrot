@@ -86,7 +86,8 @@ fn horizontal_pass(source: &[f32], source_width: usize, width: u32) -> RgbImage 
     out.par_chunks_mut(width as usize * 3)
         .zip(source.par_chunks(source_width * 3))
         .for_each(|(row, src)| {
-            for (pixel, taps) in row.chunks_exact_mut(3).zip(&taps) {
+            let (pixels, _) = row.as_chunks_mut::<3>();
+            for (pixel, taps) in pixels.iter_mut().zip(&taps) {
                 let mut acc = [0.0f32; 3];
                 for (i, &w) in taps.weights.iter().enumerate() {
                     let offset = (taps.start + i) * 3;
