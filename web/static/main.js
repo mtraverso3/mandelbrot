@@ -11,6 +11,10 @@ const MAX_ITERATIONS = 10000000;
 const DEFAULT_ITERATIONS = 1500;
 const DEEP_ZOOM = 1e10;
 const GPU_START_TIMEOUT_MS = 5000;
+const EXPORT_SCALES = [1, 2, 4, 8];
+// Browsers refuse canvases with a longer side than this
+const MAX_CANVAS_SIDE = 16384;
+const KEY_PAN_FRACTION = 0.1;
 // Renders that finish sooner go straight to full resolution without flashing the preview
 const PREVIEW_DELAY_MS = 150;
 
@@ -91,8 +95,9 @@ function onGpuMessage(message) {
     } else if (message.kind === 'failed') {
         console.warn(`GPU render failed, switching to the CPU: ${message.reason}`);
         gpu.ready = false;
+        job.onGpu = false;
         updateControls();
-        renderBands();
+        dispatchJob();
     }
 }
 
@@ -122,9 +127,16 @@ function bandTasks(pass, width, height) {
     return tasks.sort((a, b) => distance(a) - distance(b));
 }
 
-function render() {
+// Drops whatever is rendering, so no band of an old view lands on a new one
+function stopRendering() {
     generation++;
+    queue = [];
+    job = null;
     if (gpu.ready) gpu.worker.postMessage({ kind: 'cancel' });
+}
+
+function render() {
+    stopRendering();
     if (state.autoIterations) {
         job = { choosing: true };
         const { width, height } = canvas;
@@ -141,35 +153,43 @@ function renderBands() {
     const preview = document.createElement('canvas');
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
     preview.height = Math.max(1, Math.ceil(height / PREVIEW_DIVISOR));
+    const passes = [{ pass: 'full', width, height }];
+    if (previewHelps()) passes.unshift({ pass: 'preview', width: preview.width, height: preview.height });
+    startJob({ preview, previewRows: 0, fullBands: [] }, passes);
+}
 
-    const withPreview = previewHelps();
-    job = {
-        started: performance.now(),
-        onGpu: usesGpu(),
-        height,
-        preview,
-        previewRows: 0,
-        fullBands: [],
-        fullRows: 0,
-    };
+// Renders the view at `scale` times the canvas size, off screen, and downloads it
+function exportImage(scale) {
+    const width = canvas.width * scale;
+    const height = canvas.height * scale;
+    const target = document.createElement('canvas');
+    target.width = width;
+    target.height = height;
+    const interrupted = job && !job.exporting && job.elapsed === undefined;
+    stopRendering();
+    startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height }]);
+}
+
+function startJob(fields, passes) {
+    const last = passes[passes.length - 1];
+    job = { ...fields, started: performance.now(), onGpu: usesGpu(), passes, width: last.width, height: last.height, rows: 0 };
+    dispatchJob();
+    updateStatus();
+}
+
+function dispatchJob() {
     if (job.onGpu) {
-        queue = [];
         gpu.worker.postMessage({
             generation,
             view: state.view,
             iterations: state.iterations,
             normal: state.shading === 'normal',
-            passes: [
-                ...(withPreview ? [{ pass: 'preview', width: preview.width, height: preview.height }] : []),
-                { pass: 'full', width, height },
-            ],
+            passes: job.passes,
         });
     } else {
-        const previewTasks = withPreview ? bandTasks('preview', preview.width, preview.height) : [];
-        queue = [...previewTasks, ...bandTasks('full', width, height)];
+        queue = job.passes.flatMap(({ pass, width, height }) => bandTasks(pass, width, height));
         dispatch();
     }
-    updateStatus();
 }
 
 function onBand(worker, band) {
@@ -194,16 +214,31 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
             const wait = PREVIEW_DELAY_MS - (performance.now() - job.started);
             setTimeout(() => showPreview(previewed), Math.max(0, wait));
         }
-    } else {
-        ctx.putImageData(image, 0, firstRow);
-        job.fullBands.push({ image, firstRow });
-        job.fullRows += rowCount;
-        if (job.fullRows === job.height) {
-            job.elapsed = performance.now() - job.started;
-            keepRendered(state.view);
-        }
+        return;
+    }
+    const target = pass === 'export' ? job.target.getContext('2d') : ctx;
+    target.putImageData(image, 0, firstRow);
+    job.rows += rowCount;
+    if (pass === 'full') job.fullBands.push({ image, firstRow });
+    if (job.rows === job.height) {
+        job.elapsed = performance.now() - job.started;
+        if (pass === 'full') keepRendered(state.view);
+        if (pass === 'export') finishExport();
     }
     updateStatus();
+}
+
+function finishExport() {
+    const { target, interrupted } = job;
+    target.toBlob((blob) => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        const name = [state.view.x, state.view.y].map((c) => shorten(c, 12)).join('_');
+        link.download = `mandelbrot_${name}_${formatZoom(state.view.zoom)}_${target.width}x${target.height}.png`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }, 'image/png');
+    if (interrupted) render();
 }
 
 function showPreview(previewed) {
@@ -347,10 +382,15 @@ function writeUrl(push) {
     updateControls();
 }
 
-function navigate(view, { push = true } = {}) {
+// Moves to `view` right away by stretching the last render; the caller renders it
+function showView(view) {
     const from = state.view;
     state.view = view;
     reproject(from, view);
+}
+
+function navigate(view, { push = true } = {}) {
+    showView(view);
     writeUrl(push);
     render();
 }
@@ -397,25 +437,42 @@ function updateControls() {
 }
 
 function updateStatus() {
-    if (!job) return;
-    if (job.choosing) {
-        $('status').textContent = 'Choosing iteration limit…';
+    const status = $('status');
+    if (!job) {
+        status.textContent = '';
         return;
     }
-    const status = $('status');
-    const size = `${canvas.width}×${canvas.height}`;
+    if (job.choosing) {
+        status.textContent = 'Choosing iteration limit…';
+        return;
+    }
+    const size = `${job.width}×${job.height}`;
     const device = job.onGpu ? 'GPU' : 'CPU';
-    if (job.elapsed !== undefined) {
-        status.textContent = `${(job.elapsed / 1000).toFixed(2)} s at ${size} on ${device}`;
+    const seconds = `${((job.elapsed ?? 0) / 1000).toFixed(2)} s`;
+    const percent = Math.floor((100 * job.rows) / job.height);
+    if (job.exporting) {
+        status.textContent = job.elapsed === undefined
+            ? `Exporting ${size}… ${percent}% on ${device}`
+            : `Exported ${size} in ${seconds} on ${device}`;
     } else {
-        const percent = Math.floor((100 * job.fullRows) / job.height);
-        status.textContent = `Rendering… ${percent}% on ${device}`;
+        status.textContent = job.elapsed === undefined
+            ? `Rendering… ${percent}% on ${device}`
+            : `${seconds} at ${size} on ${device}`;
     }
 }
 
 function resolutionScale() {
     const choice = $('resolution').value;
     return choice === 'device' ? Math.min(window.devicePixelRatio || 1, 2) : Number(choice);
+}
+
+function updateExportScales() {
+    const select = $('export-scale');
+    const chosen = Number(select.value) || 1;
+    select.replaceChildren(...EXPORT_SCALES
+        .filter((scale) => Math.max(canvas.width, canvas.height) * scale <= MAX_CANVAS_SIDE)
+        .map((scale) => new Option(`${canvas.width * scale}×${canvas.height * scale}`, scale)));
+    select.value = [...select.options].some((option) => Number(option.value) === chosen) ? chosen : 1;
 }
 
 function resizeCanvas() {
@@ -431,6 +488,7 @@ function resizeCanvas() {
     canvas.width = width;
     canvas.height = height;
     ctx.drawImage(snapshot, 0, 0, width, height);
+    updateExportScales();
     return true;
 }
 
@@ -482,16 +540,7 @@ function setupControls() {
     $('forward').addEventListener('click', () => history.forward());
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
     $('reset').addEventListener('click', () => navigate(presetFor(state.preset)));
-    $('download').addEventListener('click', () => {
-        canvas.toBlob((blob) => {
-            const link = document.createElement('a');
-            link.href = URL.createObjectURL(blob);
-            const name = [state.view.x, state.view.y].map((c) => shorten(c, 12)).join('_');
-            link.download = `mandelbrot_${name}_${formatZoom(state.view.zoom)}.png`;
-            link.click();
-            URL.revokeObjectURL(link.href);
-        }, 'image/png');
-    });
+    $('download').addEventListener('click', () => exportImage(Number($('export-scale').value)));
 
     $('toggle-panel').addEventListener('click', () => {
         setPanelCollapsed(!$('panel').classList.contains('collapsed'));
@@ -536,7 +585,7 @@ function setupPointer() {
     };
 
     canvas.addEventListener('pointerdown', (event) => {
-        if (event.button !== 0) return;
+        if (event.button !== 0 || event.pointerType === 'touch') return;
         canvas.setPointerCapture(event.pointerId);
         drag = { start: { x: event.clientX, y: event.clientY }, rect: null };
     });
@@ -571,7 +620,9 @@ function setupPointer() {
         }
     });
 
-    canvas.addEventListener('pointercancel', endDrag);
+    canvas.addEventListener('pointercancel', (event) => {
+        if (event.pointerType !== 'touch') endDrag();
+    });
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') endDrag();
     });
@@ -588,9 +639,8 @@ function setupPointer() {
         const pixels = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? event.deltaY * 16 : event.deltaY;
         const { px, py } = clientToCanvas(event.clientX, event.clientY);
         const view = zoomAt(px, py, WHEEL_ZOOM_PER_PIXEL ** -pixels);
-        const from = state.view;
-        state.view = view;
-        reproject(from, view);
+        stopRendering();
+        showView(view);
         writeUrl(wheelTimer === null);
         clearTimeout(wheelTimer);
         wheelTimer = setTimeout(() => {
@@ -598,6 +648,100 @@ function setupPointer() {
             render();
         }, WHEEL_SETTLE_MS);
     }, { passive: false });
+}
+
+// One finger pans and two pinch; the view follows the fingers and renders once they lift
+function setupTouch() {
+    const touches = new Map();
+    let gesture = null;
+
+    // Positions are measured from where the current set of fingers went down
+    const restart = () => {
+        gesture = { view: state.view, start: new Map(touches), moved: gesture?.moved ?? false };
+    };
+    const at = (event) => {
+        const { px, py } = clientToCanvas(event.clientX, event.clientY);
+        return { x: px, y: py };
+    };
+    const middle = (points) => ({
+        x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+        y: points.reduce((sum, p) => sum + p.y, 0) / points.length,
+    });
+
+    canvas.addEventListener('pointerdown', (event) => {
+        if (event.pointerType !== 'touch') return;
+        canvas.setPointerCapture(event.pointerId);
+        if (touches.size === 0) gesture = null;
+        touches.set(event.pointerId, at(event));
+        restart();
+    });
+
+    canvas.addEventListener('pointermove', (event) => {
+        if (!touches.has(event.pointerId)) return;
+        touches.set(event.pointerId, at(event));
+        const ids = [...gesture.start.keys()].slice(0, 2);
+        const from = ids.map((id) => gesture.start.get(id));
+        const to = ids.map((id) => touches.get(id));
+        const [start, now] = [middle(from), middle(to)];
+        if (!gesture.moved && Math.hypot(now.x - start.x, now.y - start.y) < DRAG_THRESHOLD && ids.length === 1) {
+            return;
+        }
+        if (!gesture.moved) stopRendering();
+        gesture.moved = true;
+
+        let view = gesture.view;
+        if (ids.length === 2) {
+            const spread = (points) => Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+            const { dx, dy } = offsetFromCenter(view, start.x, start.y);
+            const [x, y, zoom] = zoomView(view.x, view.y, view.zoom, dx, dy, spread(to) / Math.max(spread(from), 1));
+            view = { x, y, zoom: Number(zoom) };
+        }
+        const size = pixelSize(view);
+        const [x, y] = pan(view.x, view.y, view.zoom, (start.x - now.x) * size, (start.y - now.y) * size);
+        showView({ x, y, zoom: view.zoom });
+    });
+
+    const lift = (event) => {
+        if (!touches.delete(event.pointerId)) return;
+        if (touches.size > 0) {
+            restart();
+            return;
+        }
+        if (gesture.moved) {
+            writeUrl(true);
+            render();
+        } else if (event.type === 'pointerup') {
+            const point = gesture.start.get(event.pointerId);
+            navigate(zoomAt(point.x, point.y, CLICK_ZOOM));
+        }
+    };
+    canvas.addEventListener('pointerup', lift);
+    canvas.addEventListener('pointercancel', lift);
+}
+
+function setupKeyboard() {
+    const pans = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+    window.addEventListener('keydown', (event) => {
+        if (event.target.closest('input, select, textarea') || event.ctrlKey || event.metaKey || event.altKey) return;
+        const { width, height } = canvas;
+        const push = !event.repeat;
+        if (pans[event.key]) {
+            const [sx, sy] = pans[event.key];
+            const { view } = state;
+            const size = pixelSize(view);
+            const [x, y] = pan(view.x, view.y, view.zoom, sx * width * KEY_PAN_FRACTION * size, sy * height * KEY_PAN_FRACTION * size);
+            navigate({ x, y, zoom: view.zoom }, { push });
+        } else if (event.key === '+' || event.key === '=') {
+            navigate(zoomAt(width / 2, height / 2, CLICK_ZOOM), { push });
+        } else if (event.key === '-' || event.key === '_') {
+            navigate(zoomAt(width / 2, height / 2, 1 / CLICK_ZOOM), { push });
+        } else if (event.key === 'r' || event.key === 'R') {
+            navigate(presetFor(state.preset));
+        } else {
+            return;
+        }
+        event.preventDefault();
+    });
 }
 
 async function main() {
@@ -614,9 +758,12 @@ async function main() {
 
     setupControls();
     setupPointer();
+    setupTouch();
+    setupKeyboard();
     startWorkers();
     await startGpu();
     resizeCanvas();
+    updateExportScales();
     updateControls();
     render();
 }

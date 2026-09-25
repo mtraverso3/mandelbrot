@@ -92,6 +92,8 @@ An interactive version runs in the browser at [mandelbrot.mtraverso.net](https:/
 It uses the same renderer compiled to WebAssembly: on the GPU through WebGPU where the browser
 supports it and the zoom is within 10³⁰, and otherwise split across one Web Worker per CPU core.
 Pick a preset, drag a rectangle to zoom into it, click or scroll to zoom, and share the URL to share the view.
+Arrow keys pan and `+`/`−` zoom; on touch screens, drag to pan and pinch to zoom. Download PNG renders
+the view at up to 8× the screen resolution.
 
 ```bash
 # Needs the wasm32-unknown-unknown target and wasm-bindgen-cli matching Cargo.lock;

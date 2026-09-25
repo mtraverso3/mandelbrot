@@ -52,7 +52,10 @@
                 <button id="forward" type="button" title="Next view">Forward →</button>
                 <button id="zoom-out" type="button" title="Zoom out 2×">Zoom out</button>
                 <button id="reset" type="button" title="Back to the preset">Reset</button>
-                <button id="download" type="button" title="Save the current view as PNG">Download PNG</button>
+                <div class="export">
+                    <select id="export-scale" aria-label="Export size" title="Size of the saved image"></select>
+                    <button id="download" type="button" title="Render the view at this size and save it as PNG">Download PNG</button>
+                </div>
             </div>
             <dl id="info">
                 <dt>Center</dt><dd id="center"></dd>
@@ -61,7 +64,8 @@
             </dl>
             <p id="zoom-limit" hidden>This is the deepest supported zoom.</p>
             <p class="hint" id="deep-hint" hidden>Deep views need more iterations: raise the limit if the image is mostly white.</p>
-            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom</p>
+            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom · Arrow keys pan, + and − zoom, R resets</p>
+            <p class="hint">On touch screens: drag to pan · Pinch to zoom · Tap to zoom in</p>
         </div>
     </aside>
 

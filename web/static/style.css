@@ -137,8 +137,11 @@ button:disabled {
     gap: 6px;
 }
 
-#download {
+.export {
     grid-column: span 2;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px;
 }
 
 #info {
