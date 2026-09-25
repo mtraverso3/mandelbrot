@@ -1,4 +1,4 @@
-import init, { difference, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
+import init, { difference, gpuMaxZoom, maxZoom, normalizeCoordinate, pan, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
 
 const BASE_VIEW_WIDTH = 3;
 const PREVIEW_DIVISOR = 4;
@@ -10,6 +10,7 @@ const WHEEL_SETTLE_MS = 150;
 const MAX_ITERATIONS = 10000000;
 const DEFAULT_ITERATIONS = 1500;
 const DEEP_ZOOM = 1e10;
+const GPU_START_TIMEOUT_MS = 5000;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -23,6 +24,7 @@ const state = {
     iterations: DEFAULT_ITERATIONS,
     autoIterations: true,
     shading: 'normal',
+    backend: 'gpu',
     historyIndex: 0,
     historyLength: 1,
 };
@@ -47,6 +49,46 @@ function startWorkers() {
         worker.onerror = (event) => showError(`Render worker failed: ${event.message}`);
         workers.push(worker);
         idle.push(worker);
+    }
+}
+
+// Renders through WebGPU in its own worker when the browser supports it
+const gpu = { worker: null, adapter: '', ready: false };
+
+function startGpu() {
+    if (!('gpu' in navigator)) return Promise.resolve();
+    return new Promise((resolve) => {
+        const worker = new Worker(new URL('gpu-worker.js', import.meta.url), { type: 'module' });
+        const settle = (message) => {
+            clearTimeout(timer);
+            if (message?.kind === 'ready') {
+                Object.assign(gpu, { worker, adapter: message.adapter, ready: true });
+                worker.onmessage = ({ data }) => onGpuMessage(data);
+            } else {
+                if (message?.reason) console.warn(`WebGPU unavailable: ${message.reason}`);
+                worker.terminate();
+            }
+            resolve();
+        };
+        const timer = setTimeout(settle, GPU_START_TIMEOUT_MS);
+        worker.onmessage = ({ data }) => settle(data);
+        worker.onerror = () => settle();
+    });
+}
+
+function usesGpu() {
+    return gpu.ready && state.backend === 'gpu' && state.view.zoom <= gpuMaxZoom();
+}
+
+function onGpuMessage(message) {
+    if (message.generation !== generation) return;
+    if (message.kind === 'band') {
+        drawBand(message);
+    } else if (message.kind === 'failed') {
+        console.warn(`GPU render failed, switching to the CPU: ${message.reason}`);
+        gpu.ready = false;
+        updateControls();
+        renderBands();
     }
 }
 
@@ -78,6 +120,7 @@ function bandTasks(pass, width, height) {
 
 function render() {
     generation++;
+    if (gpu.ready) gpu.worker.postMessage({ kind: 'cancel' });
     if (state.autoIterations) {
         job = { choosing: true };
         const { width, height } = canvas;
@@ -95,18 +138,32 @@ function renderBands() {
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
     preview.height = Math.max(1, Math.ceil(height / PREVIEW_DIVISOR));
 
-    const previewTasks = bandTasks('preview', preview.width, preview.height);
-    const fullTasks = bandTasks('full', width, height);
     job = {
         started: performance.now(),
+        onGpu: usesGpu(),
+        height,
         preview,
-        previewRemaining: previewTasks.length,
+        previewRows: 0,
         fullBands: [],
-        fullTotal: fullTasks.length,
+        fullRows: 0,
     };
-    queue = [...previewTasks, ...fullTasks];
+    if (job.onGpu) {
+        queue = [];
+        gpu.worker.postMessage({
+            generation,
+            view: state.view,
+            iterations: state.iterations,
+            normal: state.shading === 'normal',
+            passes: [
+                { pass: 'preview', width: preview.width, height: preview.height },
+                { pass: 'full', width, height },
+            ],
+        });
+    } else {
+        queue = [...bandTasks('preview', preview.width, preview.height), ...bandTasks('full', width, height)];
+        dispatch();
+    }
     updateStatus();
-    dispatch();
 }
 
 function onBand(worker, band) {
@@ -125,7 +182,8 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
     const image = new ImageData(new Uint8ClampedArray(pixels.buffer), width, rowCount);
     if (pass === 'preview') {
         job.preview.getContext('2d').putImageData(image, 0, firstRow);
-        if (--job.previewRemaining === 0) {
+        job.previewRows += rowCount;
+        if (job.previewRows === job.preview.height) {
             ctx.imageSmoothingEnabled = true;
             ctx.drawImage(job.preview, 0, 0, canvas.width, canvas.height);
             for (const band of job.fullBands) {
@@ -135,7 +193,8 @@ function drawBand({ pass, pixels, width, firstRow, rowCount }) {
     } else {
         ctx.putImageData(image, 0, firstRow);
         job.fullBands.push({ image, firstRow });
-        if (job.fullBands.length === job.fullTotal) {
+        job.fullRows += rowCount;
+        if (job.fullRows === job.height) {
             job.elapsed = performance.now() - job.started;
         }
     }
@@ -279,6 +338,11 @@ function updateControls() {
     const atPreset = preset.x === view.x && preset.y === view.y && preset.zoom === view.zoom;
     $('preset').value = atPreset ? state.preset : 'custom';
     $('shading').value = state.shading;
+    const gpuOption = $('backend').options[0];
+    gpuOption.disabled = !gpu.ready;
+    gpuOption.textContent = gpu.ready ? `GPU${gpu.adapter ? ` · ${gpu.adapter}` : ''}` : 'GPU (unavailable)';
+    $('backend').options[1].textContent = `CPU · ${workers.length} workers`;
+    $('backend').value = gpu.ready ? state.backend : 'cpu';
     $('iterations').value = state.iterations;
     $('auto-iterations').checked = state.autoIterations;
     $('back').disabled = state.historyIndex === 0;
@@ -299,11 +363,12 @@ function updateStatus() {
     }
     const status = $('status');
     const size = `${canvas.width}×${canvas.height}`;
+    const device = job.onGpu ? 'GPU' : 'CPU';
     if (job.elapsed !== undefined) {
-        status.textContent = `${(job.elapsed / 1000).toFixed(2)} s at ${size}`;
+        status.textContent = `${(job.elapsed / 1000).toFixed(2)} s at ${size} on ${device}`;
     } else {
-        const percent = Math.floor((100 * job.fullBands.length) / job.fullTotal);
-        status.textContent = `Rendering… ${percent}% (${workers.length} workers)`;
+        const percent = Math.floor((100 * job.fullRows) / job.height);
+        status.textContent = `Rendering… ${percent}% on ${device}`;
     }
 }
 
@@ -351,6 +416,10 @@ function setupControls() {
     $('shading').addEventListener('change', (event) => {
         state.shading = event.target.value;
         writeUrl(false);
+        render();
+    });
+    $('backend').addEventListener('change', (event) => {
+        state.backend = event.target.value;
         render();
     });
     $('iterations').addEventListener('change', (event) => {
@@ -505,6 +574,7 @@ async function main() {
     setupControls();
     setupPointer();
     startWorkers();
+    await startGpu();
     resizeCanvas();
     updateControls();
     render();

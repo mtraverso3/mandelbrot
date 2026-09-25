@@ -17,7 +17,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 - Adjustable zoom, down to 10²⁵⁰ using perturbation theory past the limits of 64-bit floats
 - Optional image antialiasing
 - Configurable resolution, iteration count and shading
-- Experimental GPU rendering (wgpu), down to 10³⁰
+- GPU rendering with wgpu, natively and through WebGPU in the browser, down to 10³⁰
 - Timing information
 
 ## Installation
@@ -72,7 +72,7 @@ mandelbrot preset -l quad-spiral --width 800 --height 640 --shading flat
 ```
 
 
-## GPU Rendering (experimental)
+## GPU Rendering
 Building with the `gpu` feature adds a [wgpu](https://wgpu.rs) backend (Vulkan, Metal or DX12):
 
 ```bash
@@ -81,15 +81,16 @@ cargo run --release --features gpu -- --gpu -v preset -l spirals
 
 The CPU computes the high-precision reference orbit, its series approximation table and the
 color bands; the GPU iterates every pixel's offset from that orbit in 32-bit floats, skipping
-iterations with the table and stopping early on periodic interior points. Long renders run as a
-series of short dispatches, so the OS never resets the GPU mid-render. Images match the CPU
-renderer apart from pixel noise in chaotic regions. It reaches zoom 10³⁰, where offsets approach
-the f32 range.
+iterations with the table and stopping early on periodic interior points, then colors them.
+Long renders run as a series of short dispatches, so the OS never resets the GPU mid-render.
+Images match the CPU renderer apart from pixel noise in chaotic regions. It reaches zoom 10³⁰,
+where offsets approach the f32 range.
 
 
 ## Web Viewer
 An interactive version runs in the browser at [mandelbrot.mtraverso.net](https://mandelbrot.mtraverso.net).
-It uses the same renderer compiled to WebAssembly, split across one Web Worker per CPU core.
+It uses the same renderer compiled to WebAssembly: on the GPU through WebGPU where the browser
+supports it and the zoom is within 10³⁰, and otherwise split across one Web Worker per CPU core.
 Pick a preset, drag a rectangle to zoom into it, click or scroll to zoom, and share the URL to share the view.
 
 ```bash
