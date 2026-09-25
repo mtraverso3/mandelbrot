@@ -1,0 +1,80 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo bench --bench render --no-run
+
+      - name: Fetch baseline from latest master run
+        id: baseline
+        continue-on-error: true
+        run: |
+          run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow bench.yml --branch master \
+            --event push --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$run_id"
+          gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name bench-results --dir baseline
+          echo "args=--baseline baseline" >> "$GITHUB_OUTPUT"
+          echo "Comparing against run $run_id"
+
+      - name: Run benchmarks
+        run: cargo bench --bench render -- --out bench-results ${{ steps.baseline.outputs.args }}
+
+      - name: Job summary
+        run: |
+          cat bench-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rendered images and diffs are in the \`bench-results\` artifact." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results
+          retention-days: 90
+
+      - name: Ensure gh-pages branch exists
+        if: github.event_name == 'push'
+        run: |
+          if ! git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            empty_tree=$(git hash-object -t tree /dev/null)
+            commit=$(git commit-tree "$empty_tree" -m "Initialize gh-pages")
+            git push origin "$commit:refs/heads/gh-pages"
+          fi
+
+      - name: Publish history
+        if: github.event_name == 'push'
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Mandelbrot benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench-results/results.json
+          github-token: ${{ github.token }}
+          auto-push: true
+          alert-threshold: "125%"
+          comment-on-alert: true
