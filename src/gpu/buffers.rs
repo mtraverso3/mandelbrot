@@ -202,6 +202,26 @@ pub(super) struct Buffers {
     pub(super) readback: wgpu::Buffer,
     pub(super) unfinished_readback: wgpu::Buffer,
     pub(super) bind_group: wgpu::BindGroup,
+    /// Only bound, but freed with the rest
+    inputs: [wgpu::Buffer; 4],
+}
+
+/// In the browser, dropping a buffer leaves it to the garbage collector, which cannot see how
+/// much GPU memory it holds, so renders free theirs as soon as they finish.
+impl Drop for Buffers {
+    fn drop(&mut self) {
+        let outputs = [
+            &self.params,
+            &self.samples,
+            &self.pixels,
+            &self.unfinished,
+            &self.readback,
+            &self.unfinished_readback,
+        ];
+        for buffer in outputs.into_iter().chain(&self.inputs) {
+            buffer.destroy();
+        }
+    }
 }
 
 impl Buffers {
@@ -286,6 +306,7 @@ impl Buffers {
             readback,
             unfinished_readback,
             bind_group,
+            inputs: [orbit, bla, bla_levels, states],
         }
     }
 }
