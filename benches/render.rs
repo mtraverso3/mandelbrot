@@ -256,7 +256,7 @@ fn run(scenario: &Scenario, cli: &Cli, machine: &Machine, full_res: &mut Option<
                 .build()
                 .expect("thread pool");
             let (durations, img) = pool.install(|| time(sampling, || render(view, opts)));
-            if *opts == RenderOptions::default() && Some(*view) == preset("mandelbrot") {
+            if *opts == RenderOptions::default() && preset("mandelbrot").as_ref() == Some(view) {
                 full_res.get_or_insert_with(|| img.clone());
             }
             let detail = format!(

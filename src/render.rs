@@ -1,12 +1,23 @@
+use crate::Coordinate;
 use crate::color::{self, INTERIOR};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Viewport {
-    pub center_x: f64,
-    pub center_y: f64,
+    pub center_x: Coordinate,
+    pub center_y: Coordinate,
     pub zoom: f64,
+}
+
+impl Viewport {
+    pub fn from_f64(center_x: f64, center_y: f64, zoom: f64) -> Self {
+        Self {
+            center_x: Coordinate::from_f64(center_x),
+            center_y: Coordinate::from_f64(center_y),
+            zoom,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,8 +115,8 @@ impl Frame {
         Self {
             left: opts.width as f64 / 2.0,
             top: opts.height as f64 / 2.0,
-            center_x: view.center_x,
-            center_y: view.center_y,
+            center_x: view.center_x.to_f64(),
+            center_y: view.center_y.to_f64(),
             pixel_size: BASE_VIEW_WIDTH / view.zoom / opts.width as f64,
             band_scale: (view.zoom + 1.0).log2(),
             light: (angle.cos(), angle.sin()),
@@ -332,24 +343,12 @@ mod tests {
 
     #[test]
     fn lanes_match_scalar_iteration_on_full_view() {
-        assert_matches_reference(
-            Viewport {
-                center_x: -0.75,
-                center_y: 0.0,
-                zoom: 1.0,
-            },
-            67,
-            53,
-        );
+        assert_matches_reference(Viewport::from_f64(-0.75, 0.0, 1.0), 67, 53);
     }
 
     #[test]
     fn lanes_match_scalar_iteration_on_deep_zoom() {
-        let view = Viewport {
-            center_x: -1.249559196,
-            center_y: 0.030466443,
-            zoom: 1.73e6,
-        };
+        let view = Viewport::from_f64(-1.249559196, 0.030466443, 1.73e6);
         assert_matches_reference(view, 45, 37);
     }
 
@@ -378,24 +377,13 @@ mod tests {
             max_iterations: 50,
             shading: Shading::Normal,
         };
-        let img = render(
-            &Viewport {
-                center_x: -0.75,
-                center_y: 0.0,
-                zoom: 1.0,
-            },
-            &opts,
-        );
+        let img = render(&Viewport::from_f64(-0.75, 0.0, 1.0), &opts);
         assert_eq!(img.dimensions(), (21, 9));
     }
 
     #[test]
     fn row_bands_match_full_render() {
-        let view = Viewport {
-            center_x: -0.7453,
-            center_y: 0.1127,
-            zoom: 150.0,
-        };
+        let view = Viewport::from_f64(-0.7453, 0.1127, 150.0);
         let opts = RenderOptions {
             width: 37,
             height: 23,
@@ -421,16 +409,7 @@ mod tests {
             height: 4,
             ..RenderOptions::default()
         };
-        render_rows(
-            &Viewport {
-                center_x: 0.0,
-                center_y: 0.0,
-                zoom: 1.0,
-            },
-            &opts,
-            0,
-            &mut [0; 5],
-        );
+        render_rows(&Viewport::from_f64(0.0, 0.0, 1.0), &opts, 0, &mut [0; 5]);
     }
 
     #[test]
@@ -440,14 +419,7 @@ mod tests {
             height: 5,
             ..RenderOptions::default()
         };
-        let img = render(
-            &Viewport {
-                center_x: 0.0,
-                center_y: 0.0,
-                zoom: 1.0,
-            },
-            &opts,
-        );
+        let img = render(&Viewport::from_f64(0.0, 0.0, 1.0), &opts);
         assert_eq!(img.dimensions(), (0, 5));
     }
 }
