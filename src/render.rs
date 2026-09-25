@@ -9,7 +9,8 @@ pub struct Viewport {
     pub zoom: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum Shading {
     Flat,
     Normal,
@@ -41,23 +42,41 @@ const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
 pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
+    let mut img = RgbImage::new(opts.width, opts.height);
+    render_rows(view, opts, 0, &mut img);
+    img
+}
+
+/// Renders the rows starting at `first_row` into `rows`, a packed RGB buffer holding a whole
+/// number of rows of the full `opts.width` x `opts.height` image.
+pub fn render_rows(view: &Viewport, opts: &RenderOptions, first_row: u32, rows: &mut [u8]) {
+    let row_len = opts.width as usize * 3;
+    if row_len == 0 || rows.is_empty() {
+        return;
+    }
+    assert!(
+        rows.len().is_multiple_of(row_len)
+            && first_row as usize + rows.len() / row_len <= opts.height as usize,
+        "row buffer must hold whole rows within the image"
+    );
     match opts.shading {
-        Shading::Flat => render_with::<false>(view, opts),
-        Shading::Normal => render_with::<true>(view, opts),
+        Shading::Flat => render_rows_with::<false>(view, opts, first_row, rows),
+        Shading::Normal => render_rows_with::<true>(view, opts, first_row, rows),
     }
 }
 
-fn render_with<const NORMAL: bool>(view: &Viewport, opts: &RenderOptions) -> RgbImage {
-    let mut img = RgbImage::new(opts.width, opts.height);
-    if img.is_empty() {
-        return img;
-    }
+fn render_rows_with<const NORMAL: bool>(
+    view: &Viewport,
+    opts: &RenderOptions,
+    first_row: u32,
+    rows: &mut [u8],
+) {
     let frame = Frame::new(view, opts);
 
-    img.par_chunks_mut(opts.width as usize * 3)
+    rows.par_chunks_mut(opts.width as usize * 3)
         .enumerate()
-        .for_each(|(y, row)| {
-            let ci = frame.imag(y);
+        .for_each(|(offset, row)| {
+            let ci = frame.imag(first_row as usize + offset);
             for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
                 let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
                 let escapes = escape_lanes::<NORMAL>(&cr, ci, opts.max_iterations);
@@ -67,8 +86,6 @@ fn render_with<const NORMAL: bool>(view: &Viewport, opts: &RenderOptions) -> Rgb
                 }
             }
         });
-
-    img
 }
 
 struct Frame {
@@ -370,6 +387,50 @@ mod tests {
             &opts,
         );
         assert_eq!(img.dimensions(), (21, 9));
+    }
+
+    #[test]
+    fn row_bands_match_full_render() {
+        let view = Viewport {
+            center_x: -0.7453,
+            center_y: 0.1127,
+            zoom: 150.0,
+        };
+        let opts = RenderOptions {
+            width: 37,
+            height: 23,
+            max_iterations: 400,
+            shading: Shading::Normal,
+        };
+        let full = render(&view, &opts);
+        let row_len = opts.width as usize * 3;
+        let mut stitched = Vec::new();
+        for (first_row, rows) in [(0, 5), (5, 1), (6, 10), (16, 7)] {
+            let mut band = vec![0; row_len * rows];
+            render_rows(&view, &opts, first_row, &mut band);
+            stitched.extend(band);
+        }
+        assert_eq!(stitched, full.into_raw());
+    }
+
+    #[test]
+    #[should_panic(expected = "whole rows")]
+    fn render_rows_rejects_partial_rows() {
+        let opts = RenderOptions {
+            width: 4,
+            height: 4,
+            ..RenderOptions::default()
+        };
+        render_rows(
+            &Viewport {
+                center_x: 0.0,
+                center_y: 0.0,
+                zoom: 1.0,
+            },
+            &opts,
+            0,
+            &mut [0; 5],
+        );
     }
 
     #[test]
