@@ -3,8 +3,7 @@ use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
 
 thread_local! {
-    // Every band of a view shares its reference orbit and color bands, so each worker keeps
-    // the last renderer to build the next one from.
+    // Bands of one view share its reference orbit and color bands
     static LAST: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
 
@@ -20,7 +19,6 @@ fn to_strings(view: &Viewport) -> Vec<String> {
     vec![view.center_x.to_string(), view.center_y.to_string()]
 }
 
-/// Renders a band of rows of a `width` x `height` view as RGBA, ready for `ImageData`.
 #[allow(clippy::too_many_arguments)]
 #[wasm_bindgen(js_name = renderRows)]
 pub fn render_rows_rgba(
@@ -65,7 +63,7 @@ pub fn preset_names() -> Vec<String> {
     PRESETS.iter().map(|(name, ..)| name.to_string()).collect()
 }
 
-/// The preset's view as `[center_x, center_y, zoom]`.
+/// `[center_x, center_y, zoom]`
 #[wasm_bindgen(js_name = presetView)]
 pub fn preset_view(name: &str) -> Option<Vec<String>> {
     mandelbrot::preset(name).map(|view| {
@@ -75,7 +73,7 @@ pub fn preset_view(name: &str) -> Option<Vec<String>> {
     })
 }
 
-/// The center moved by `(dx, dy)`, as `[center_x, center_y]`.
+/// `[center_x, center_y]`
 #[wasm_bindgen]
 pub fn pan(
     center_x: &str,
@@ -87,8 +85,7 @@ pub fn pan(
     Ok(to_strings(&viewport(center_x, center_y, zoom)?.pan(dx, dy)))
 }
 
-/// The view zoomed by `factor` around the point `(dx, dy)` from the center, as
-/// `[center_x, center_y, zoom]`.
+/// `[center_x, center_y, zoom]`
 #[wasm_bindgen(js_name = zoomAt)]
 pub fn zoom_at(
     center_x: &str,
@@ -104,13 +101,11 @@ pub fn zoom_at(
     Ok(parts)
 }
 
-/// `a - b` as the nearest `f64`.
 #[wasm_bindgen]
 pub fn difference(a: &str, b: &str) -> Result<f64, JsError> {
     Ok(a.parse::<Coordinate>()?.difference(&b.parse()?))
 }
 
-/// The canonical form of a decimal coordinate, or `undefined` if it is not one.
 #[wasm_bindgen(js_name = normalizeCoordinate)]
 pub fn normalize_coordinate(value: &str) -> Option<String> {
     value.parse::<Coordinate>().ok().map(|c| c.to_string())

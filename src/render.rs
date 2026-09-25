@@ -21,7 +21,6 @@ impl Viewport {
         }
     }
 
-    /// Moves the center by `(dx, dy)` in the complex plane.
     pub fn pan(&self, dx: f64, dy: f64) -> Self {
         let scale = center_digits(self.zoom);
         Self {
@@ -31,8 +30,6 @@ impl Viewport {
         }
     }
 
-    /// Zooms by `factor` (clamped to [`MAX_ZOOM`]) around the point `(dx, dy)` away from the
-    /// center, which stays in place on screen.
     pub fn zoom_at(&self, dx: f64, dy: f64, factor: f64) -> Self {
         let zoom = (self.zoom * factor).min(MAX_ZOOM);
         let keep = 1.0 - self.zoom / zoom;
@@ -45,8 +42,6 @@ impl Viewport {
     }
 }
 
-/// Decimal places that keep the center well below a pixel at `zoom`, for images up to
-/// 100,000 pixels wide.
 fn center_digits(zoom: f64) -> u32 {
     zoom.max(1.0).log10().ceil() as u32 + 10
 }
@@ -78,31 +73,18 @@ impl Default for RenderOptions {
 }
 
 pub(crate) const ESCAPE_RADIUS_SQR: f64 = 100.0 * 100.0;
-/// Beyond this zoom, `f64` pixel coordinates lose precision and rendering switches to
-/// perturbation around a high-precision reference orbit.
 pub const PERTURBATION_ZOOM: f64 = 1e10;
-/// Deepest supported zoom: pixel offsets and derivatives must still fit in `f64`.
 pub const MAX_ZOOM: f64 = 1e250;
 const LANES: usize = 8;
 const PROBE_COLUMNS: usize = 64;
-/// Palette bands across the middle 80% of a view's escape iterations. Outside this range the
-/// zoom-based band width is replaced, so deep views neither wash out into a single band nor
-/// turn into noise.
 const MIN_BANDS: f64 = 4.0;
 const MAX_BANDS: f64 = 48.0;
-/// Palette position of the view's 10th percentile once bands are fitted to the view, in the
-/// blues rather than the dark end of the palette.
 const ANCHOR_POSITION: f64 = 4.0;
-/// Fewer escaped probe points than this are too few to fit bands to.
 const MIN_PROBE_ESCAPES: usize = 32;
 const CYCLE_CHECK_START: usize = 16;
 pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
-/// The band width and phase for a view, given its zoom-based band width and the probe's smooth
-/// escape iterations. Keeps the zoom-based width while it gives between [`MIN_BANDS`] and
-/// [`MAX_BANDS`] bands; otherwise clamps to that range and blends the phase towards anchoring
-/// the 10th percentile at [`ANCHOR_POSITION`], so colors change continuously with zoom.
 fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
     if smooth.len() < MIN_PROBE_ESCAPES {
         return (zoom_width, 0.0);
@@ -115,6 +97,7 @@ fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
         return (zoom_width, 0.0);
     }
     let width = zoom_width.clamp(spread / MAX_BANDS, spread / MIN_BANDS);
+    // Blending the anchor in with the clamp keeps colors continuous while zooming
     let anchoring = 1.0 - width.min(zoom_width) / width.max(zoom_width);
     (width, anchoring * (ANCHOR_POSITION - low / width))
 }
@@ -123,14 +106,10 @@ pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
     Renderer::new(view, opts).render()
 }
 
-/// Renders the rows starting at `first_row` into `rows`, a packed RGB buffer holding a whole
-/// number of rows of the full `opts.width` x `opts.height` image.
 pub fn render_rows(view: &Viewport, opts: &RenderOptions, first_row: u32, rows: &mut [u8]) {
     Renderer::new(view, opts).render_rows(first_row, rows);
 }
 
-/// A prepared view: the pixel grid and, for deep zooms, the reference orbit, which can be
-/// shared between renderers of the same center.
 pub struct Renderer {
     view: Viewport,
     opts: RenderOptions,
@@ -147,8 +126,6 @@ impl Renderer {
         &self.view
     }
 
-    /// Like [`Renderer::new`], but reuses the reference orbit and color bands of `previous`
-    /// where they still apply, e.g. for other bands or resolutions of the same view.
     pub fn reusing(view: &Viewport, opts: &RenderOptions, previous: Option<&Renderer>) -> Self {
         // Rounded up so slightly different resolutions of a view can share one orbit
         let aspect = (opts.height as f64 / opts.width.max(1) as f64 * 8.0).ceil() / 8.0;
@@ -181,8 +158,6 @@ impl Renderer {
         ((PROBE_COLUMNS as f64 * aspect).round() as usize).clamp(1, 4 * PROBE_COLUMNS)
     }
 
-    /// Smooth escape iterations of a coarse grid spanning the view, independent of the output
-    /// resolution apart from its aspect ratio.
     fn probe(&self) -> Vec<f64> {
         let (width, height) = (self.opts.width as f64, self.opts.height as f64);
         let rows = self.probe_rows();
@@ -228,7 +203,6 @@ impl Renderer {
         img
     }
 
-    /// See [`render_rows`].
     pub fn render_rows(&self, first_row: u32, rows: &mut [u8]) {
         let row_len = self.opts.width as usize * 3;
         if row_len == 0 || rows.is_empty() {
@@ -380,8 +354,7 @@ impl Escape {
 
 type Lanes = [f64; LANES];
 
-/// Iterates a block of horizontally adjacent pixels in lockstep so the compiler can vectorize
-/// the arithmetic; every lane performs exactly the scalar operations.
+/// Adjacent pixels iterated in lockstep so the arithmetic vectorizes.
 struct Block {
     cr: Lanes,
     ci: Lanes,
@@ -415,8 +388,7 @@ impl Block {
         block
     }
 
-    /// Parks a finished lane on the fixed point z = 0 with a NaN checkpoint, so it never
-    /// triggers the escape or cycle checks again.
+    /// Parks a lane on the fixed point z = 0 with a NaN checkpoint so no check fires again.
     fn retire(&mut self, lane: usize) {
         debug_assert!(self.is_active(lane));
         self.cr[lane] = 0.0;

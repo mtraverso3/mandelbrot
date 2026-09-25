@@ -4,11 +4,9 @@ use num_traits::{Signed, Zero};
 use std::fmt;
 use std::str::FromStr;
 
-/// Longest decimal expansion accepted, which bounds the work any single coordinate can cause.
 pub const MAX_DIGITS: u32 = 2000;
 
-/// An exact decimal number `digits / 10^scale`, used for view centers deeper than `f64` can
-/// address. Always kept normalized (no trailing fractional zeros), so equality is structural.
+/// `digits / 10^scale`, normalized without trailing fractional zeros so equality is structural.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Coordinate {
     digits: BigInt,
@@ -40,7 +38,6 @@ impl Coordinate {
         coordinate
     }
 
-    /// The shortest decimal that converts back to exactly `value`.
     pub fn from_f64(value: f64) -> Self {
         assert!(value.is_finite(), "coordinates must be finite");
         format!("{value}")
@@ -48,19 +45,16 @@ impl Coordinate {
             .expect("f64 formats as a decimal")
     }
 
-    /// The nearest `f64`.
     pub fn to_f64(&self) -> f64 {
         self.to_string()
             .parse()
             .expect("coordinates format as decimals")
     }
 
-    /// Decimal places after the point.
     pub fn scale(&self) -> u32 {
         self.scale
     }
 
-    /// `self + delta`, rounded to `scale` decimal places.
     pub fn offset(&self, delta: f64, scale: u32) -> Self {
         assert!(delta.is_finite(), "offsets must be finite");
         let scale = scale.min(MAX_DIGITS);
@@ -72,7 +66,6 @@ impl Coordinate {
         Self::new(base + scaled_f64(delta, scale), scale)
     }
 
-    /// `self - other` as the nearest `f64`.
     pub fn difference(&self, other: &Self) -> f64 {
         let scale = self.scale.max(other.scale);
         let diff =
@@ -80,7 +73,6 @@ impl Coordinate {
         Self::new(diff, scale).to_f64()
     }
 
-    /// The value in binary fixed point with `frac_bits` fractional bits, rounded to nearest.
     pub(crate) fn to_fixed(&self, frac_bits: u32) -> BigInt {
         div_round(&(&self.digits << frac_bits as usize), &pow10(self.scale))
     }
@@ -99,7 +91,6 @@ fn div_round(numerator: &BigInt, denominator: &BigInt) -> BigInt {
     }
 }
 
-/// `round(value * 10^scale)`, computed exactly from the binary representation of `value`.
 fn scaled_f64(value: f64, scale: u32) -> BigInt {
     if value == 0.0 {
         return BigInt::zero();

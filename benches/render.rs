@@ -152,8 +152,7 @@ fn scenarios() -> Vec<Scenario> {
         },
         max_samples: 3,
     });
-    // Past f64 precision, rendered with perturbation: a copy of seahorse valley inside a
-    // period-472 minibrot, and the Misiurewicz point c = i
+    // Seahorse valley inside a period-472 minibrot, and the Misiurewicz point c = i
     list.push(Scenario {
         name: "render/deep-seahorse/normal".into(),
         workload: Workload::Render {
