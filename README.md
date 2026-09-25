@@ -72,8 +72,12 @@ cargo bench --bench render
 cargo bench --bench render -- --samples 2 --filter spirals --baseline path/to/previous
 ```
 
-The `Benchmark` workflow runs on every push and pull request. Its job summary shows timings and
-image diffs against the latest `master` run, and the `bench-results` artifact holds the rendered
+Each run records the machine it ran on. Comparisons against a baseline from different hardware
+are marked ❔, and changes only count when they exceed both `--threshold` and the measured noise.
+
+The `Benchmark` workflow builds the bench binary for both the change and its base commit (the PR
+base, or the previous commit on `master`) and runs them back to back on the same runner. The job
+summary shows timing deltas and image diffs, and the `bench-results` artifact holds the rendered
 images. Pushes to `master` publish timing history to the `gh-pages` branch
 (charts at `https://<owner>.github.io/mandelbrot/dev/bench/` once GitHub Pages is enabled).
 
