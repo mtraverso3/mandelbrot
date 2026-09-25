@@ -10,8 +10,11 @@ import { difference, maxZoom, pan } from './mandelbrot_web.js';
 // within a quarter of its width.
 
 const AHEAD = 2;
-// Zooming further past a keyframe than the next one is stalls until that one is ready
-const MAX_STRETCH = AHEAD;
+// Zooming this much further than a keyframe stalls until the next one is ready. A little past
+// AHEAD, so the zoom can always reach the depth where the next keyframe starts to cover it.
+const MAX_STRETCH = AHEAD * 1.05;
+// In keyframe pixels, so rounding never makes a keyframe miss the view it was rendered for
+const COVER_TOLERANCE = 1;
 // Keyframes that take longer than a doubling of the zoom come out smaller, down to this
 // fraction of the canvas, so heavy regions slow the zoom less
 const MIN_KEYFRAME_SCALE = 0.35;
@@ -82,9 +85,9 @@ export function createAutoZoom(host) {
 
     function covers(frame, view) {
         const rect = host.rectIn(frame, view);
-        return rect.x >= 0 && rect.y >= 0
-            && rect.x + rect.width <= frame.canvas.width
-            && rect.y + rect.height <= frame.canvas.height;
+        return rect.x >= -COVER_TOLERANCE && rect.y >= -COVER_TOLERANCE
+            && rect.x + rect.width <= frame.canvas.width + COVER_TOLERANCE
+            && rect.y + rect.height <= frame.canvas.height + COVER_TOLERANCE;
     }
 
 
@@ -130,7 +133,9 @@ export function createAutoZoom(host) {
         pending = true;
         const started = epoch;
         const { width, height } = host.size();
-        const view = viewAt(Math.min(Math.max(deepest, zoom) * AHEAD, maxZoom()));
+        // Never further past the deepest keyframe than the zoom may stretch it, or the zoom
+        // would stall before reaching the new one
+        const view = viewAt(Math.min(deepest * AHEAD, maxZoom()));
         const since = performance.now();
         const choose = rendered++ % CHOOSE_ITERATIONS_EVERY === 0;
         host.renderKeyframe(view, Math.round(width * scale), Math.round(height * scale), choose).then((finished) => {
