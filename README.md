@@ -79,10 +79,12 @@ Building with the `gpu` feature adds a [wgpu](https://wgpu.rs) backend (Vulkan, 
 cargo run --release --features gpu -- --gpu -v preset -l spirals
 ```
 
-The CPU computes the high-precision reference orbit and color bands; the GPU iterates every
-pixel's offset from that orbit in 32-bit floats. Images match the CPU renderer apart from pixel
-noise in chaotic regions. It reaches zoom 10³⁰, where offsets approach the f32 range, and does not
-yet skip iterations with series approximation.
+The CPU computes the high-precision reference orbit, its series approximation table and the
+color bands; the GPU iterates every pixel's offset from that orbit in 32-bit floats, skipping
+iterations with the table and stopping early on periodic interior points. Long renders run as a
+series of short dispatches, so the OS never resets the GPU mid-render. Images match the CPU
+renderer apart from pixel noise in chaotic regions. It reaches zoom 10³⁰, where offsets approach
+the f32 range.
 
 
 ## Web Viewer

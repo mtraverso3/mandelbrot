@@ -84,6 +84,11 @@ impl ReferenceOrbit {
         &self.points
     }
 
+    #[cfg(feature = "gpu")]
+    pub(crate) fn bla(&self) -> &bla::Table {
+        &self.bla
+    }
+
     pub(crate) fn escape<const TRACK_DERIVATIVE: bool>(
         &self,
         dcr: f64,
