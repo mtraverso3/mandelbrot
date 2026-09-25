@@ -9,7 +9,7 @@ pub struct Viewport {
     pub zoom: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum Shading {
     Flat,
     Normal,
@@ -49,6 +49,9 @@ pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
 
 fn render_with<const NORMAL: bool>(view: &Viewport, opts: &RenderOptions) -> RgbImage {
     let mut img = RgbImage::new(opts.width, opts.height);
+    if img.is_empty() {
+        return img;
+    }
     let frame = Frame::new(view, opts);
 
     img.par_chunks_mut(opts.width as usize * 3)
@@ -375,5 +378,23 @@ mod tests {
             &opts,
         );
         assert_eq!(img.dimensions(), (21, 9));
+    }
+
+    #[test]
+    fn render_handles_empty_images() {
+        let opts = RenderOptions {
+            width: 0,
+            height: 5,
+            ..RenderOptions::default()
+        };
+        let img = render(
+            &Viewport {
+                center_x: 0.0,
+                center_y: 0.0,
+                zoom: 1.0,
+            },
+            &opts,
+        );
+        assert_eq!(img.dimensions(), (0, 5));
     }
 }
