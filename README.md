@@ -2,6 +2,8 @@
 
 A command-line tool written in Rust to generate Mandelbrot set images. Choose from preset locations or specify custom coordinates.
 
+Interactive web explorer at: https://mandelbrot.mtraverso.net/
+
 ## Example Outputs
 
 |               Mandelbrot               |             Minibrot              |          Spirals          |
