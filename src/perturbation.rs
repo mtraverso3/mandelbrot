@@ -1,4 +1,5 @@
-use crate::render::{ESCAPE_RADIUS_SQR, Escape};
+use crate::bla;
+use crate::render::{BASE_VIEW_WIDTH, ESCAPE_RADIUS_SQR, Escape};
 use crate::{Coordinate, Viewport};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -15,6 +16,14 @@ pub struct ReferenceOrbit {
     max_iterations: usize,
     frac_bits: u32,
     points: Vec<(f64, f64)>,
+    max_offset: f64,
+    bla: bla::Table,
+}
+
+/// A bound on the distance of any pixel from the center: half the view's diagonal, from its
+/// half-width and half-height.
+fn max_offset(view: &Viewport, aspect: f64) -> f64 {
+    BASE_VIEW_WIDTH / view.zoom * (1.0 + aspect) / 2.0
 }
 
 pub(crate) fn precision_bits(zoom: f64) -> u32 {
@@ -22,7 +31,9 @@ pub(crate) fn precision_bits(zoom: f64) -> u32 {
 }
 
 impl ReferenceOrbit {
-    pub fn compute(view: &Viewport, max_iterations: usize) -> Self {
+    /// The orbit of the view center, with iteration skipping valid for images up to `aspect`
+    /// times as tall as they are wide.
+    pub fn compute(view: &Viewport, max_iterations: usize, aspect: f64) -> Self {
         let frac_bits = precision_bits(view.zoom);
         let cr = view.center_x.to_fixed(frac_bits);
         let ci = view.center_y.to_fixed(frac_bits);
@@ -45,22 +56,26 @@ impl ReferenceOrbit {
             }
         }
 
+        let max_offset = max_offset(view, aspect);
         Self {
             center_x: view.center_x.clone(),
             center_y: view.center_y.clone(),
             max_iterations,
             frac_bits,
+            bla: bla::Table::new(&points, max_offset),
             points,
+            max_offset,
         }
     }
 
-    /// Whether this orbit can serve `view`: same center and iteration limit, and enough
-    /// precision for its zoom.
-    pub fn matches(&self, view: &Viewport, max_iterations: usize) -> bool {
+    /// Whether this orbit can serve `view`: same center and iteration limit, enough
+    /// precision for its zoom, and iteration skipping valid over its whole extent.
+    pub fn matches(&self, view: &Viewport, max_iterations: usize, aspect: f64) -> bool {
         self.center_x == view.center_x
             && self.center_y == view.center_y
             && self.max_iterations == max_iterations
             && self.frac_bits >= precision_bits(view.zoom)
+            && self.max_offset >= max_offset(view, aspect)
     }
 
     pub fn len(&self) -> usize {
@@ -82,13 +97,42 @@ impl ReferenceOrbit {
         dci: f64,
         max_iterations: usize,
     ) -> Option<Escape> {
+        self.escape_with::<TRACK_DERIVATIVE, true>(dcr, dci, max_iterations)
+    }
+
+    fn escape_with<const TRACK_DERIVATIVE: bool, const SKIP: bool>(
+        &self,
+        dcr: f64,
+        dci: f64,
+        max_iterations: usize,
+    ) -> Option<Escape> {
         let orbit = &self.points;
         let last = orbit.len() - 1;
         let (mut dr, mut di) = (0.0f64, 0.0f64);
         let (mut der_r, mut der_i) = (1.0f64, 0.0f64);
         let mut m = 0;
+        let mut n = 0;
 
-        for n in 0..max_iterations {
+        while n < max_iterations {
+            let skip = SKIP
+                .then(|| self.bla.lookup(m, dr * dr + di * di, max_iterations - n))
+                .flatten();
+            if let Some((step, length)) = skip {
+                (dr, di) = (
+                    step.a.0 * dr - step.a.1 * di + step.b.0 * dcr - step.b.1 * dci,
+                    step.a.0 * di + step.a.1 * dr + step.b.0 * dci + step.b.1 * dcr,
+                );
+                if TRACK_DERIVATIVE {
+                    (der_r, der_i) = (
+                        step.a.0 * der_r - step.a.1 * der_i + step.b.0,
+                        step.a.0 * der_i + step.a.1 * der_r + step.b.1,
+                    );
+                }
+                m += length;
+                n += length;
+                continue;
+            }
+
             let (ref_r, ref_i) = orbit[m];
             let zr = ref_r + dr;
             let zi = ref_i + di;
@@ -116,6 +160,7 @@ impl ReferenceOrbit {
                 2.0 * (ref_r * di + ref_i * dr) + 2.0 * dr * di + dci,
             );
             m += 1;
+            n += 1;
         }
         None
     }
@@ -165,27 +210,44 @@ mod tests {
         None
     }
 
-    /// Checks every pixel of a `size` x `size` grid against exact iteration, and that the grid
-    /// is not trivially uniform.
-    fn assert_matches_exact(view: &Viewport, size: usize, max_iterations: usize) {
-        let orbit = ReferenceOrbit::compute(view, max_iterations);
+    /// Checks every pixel of a `size` x `size` grid against exact iteration: plain perturbation
+    /// must match exactly, and iteration skipping may change at most `max_skip_mismatches`
+    /// pixels. Also checks the grid is not trivially uniform.
+    fn assert_matches_exact(
+        view: &Viewport,
+        size: usize,
+        max_iterations: usize,
+        max_skip_mismatches: usize,
+    ) {
+        let orbit = ReferenceOrbit::compute(view, max_iterations, 1.0);
         let pixel = 3.0 / view.zoom / size as f64;
         let mut distinct = std::collections::HashSet::new();
+        let mut skip_mismatches = 0;
         for y in 0..size {
             for x in 0..size {
                 let dx = (x as f64 - size as f64 / 2.0) * pixel;
                 let dy = (y as f64 - size as f64 / 2.0) * pixel;
-                let perturbed = orbit
-                    .escape::<true>(dx, dy, max_iterations)
+                let exact = exact_escape(view, dx, dy, max_iterations);
+                let plain = orbit
+                    .escape_with::<true, false>(dx, dy, max_iterations)
                     .map(|e| e.iterations);
-                assert_eq!(
-                    perturbed,
-                    exact_escape(view, dx, dy, max_iterations),
-                    "pixel ({x}, {y})"
-                );
-                distinct.insert(perturbed);
+                let skipped = orbit
+                    .escape_with::<true, true>(dx, dy, max_iterations)
+                    .map(|e| e.iterations);
+                assert_eq!(plain, exact, "pixel ({x}, {y})");
+                skip_mismatches += (skipped != exact) as usize;
+                distinct.insert(exact);
             }
         }
+        eprintln!(
+            "zoom {:e}: {skip_mismatches}/{} skipped mismatches",
+            view.zoom,
+            size * size
+        );
+        assert!(
+            skip_mismatches <= max_skip_mismatches,
+            "{skip_mismatches} pixels changed by skipping"
+        );
         assert!(distinct.len() > 1, "grid should not be uniform");
     }
 
@@ -196,7 +258,7 @@ mod tests {
             center_y: "1".parse().unwrap(),
             zoom: 1e30,
         };
-        assert_matches_exact(&view, 24, 3000);
+        assert_matches_exact(&view, 24, 3000, 0);
     }
 
     #[test]
@@ -206,7 +268,7 @@ mod tests {
             center_y: "1".parse().unwrap(),
             zoom: 1e100,
         };
-        assert_matches_exact(&view, 16, 3000);
+        assert_matches_exact(&view, 16, 3000, 0);
     }
 
     #[test]
@@ -218,14 +280,14 @@ mod tests {
             center_y: "0".parse().unwrap(),
             zoom: 1e3,
         };
-        assert!(ReferenceOrbit::compute(&view, 2000).len() < 2000);
-        assert_matches_exact(&view, 24, 2000);
+        assert!(ReferenceOrbit::compute(&view, 2000, 1.0).len() < 2000);
+        assert_matches_exact(&view, 24, 2000, 0);
     }
 
     #[test]
     fn matches_exact_iteration_near_minibrot() {
         let view = Viewport::from_f64(-1.249559196, 0.030466443, 1.73e6);
-        assert_matches_exact(&view, 24, 1500);
+        assert_matches_exact(&view, 24, 1500, 576 / 100);
     }
 
     #[test]
@@ -238,38 +300,36 @@ mod tests {
 
     #[test]
     fn orbit_of_interior_point_runs_to_the_limit() {
-        let orbit = ReferenceOrbit::compute(&Viewport::from_f64(-0.1, 0.1, 1e12), 500);
+        let orbit = ReferenceOrbit::compute(&Viewport::from_f64(-0.1, 0.1, 1e12), 500, 1.0);
         assert_eq!(orbit.len(), 501);
     }
 
     #[test]
     fn orbit_of_exterior_point_stops_after_escaping() {
-        let orbit = ReferenceOrbit::compute(&Viewport::from_f64(0.5, 0.5, 1e12), 500);
+        let orbit = ReferenceOrbit::compute(&Viewport::from_f64(0.5, 0.5, 1e12), 500, 1.0);
         assert!(orbit.len() < 20);
         let (x, y) = orbit.points[orbit.len() - 1];
         assert!(x * x + y * y > ESCAPE_RADIUS_SQR);
     }
 
     #[test]
-    fn matches_requires_same_center_and_enough_precision() {
+    fn matches_requires_same_center_and_coverage() {
         let view = Viewport::from_f64(-0.1, 0.1, 1e12);
-        let orbit = ReferenceOrbit::compute(&view, 500);
-        assert!(orbit.matches(&view, 500));
-        assert!(orbit.matches(
-            &Viewport {
-                zoom: 1e11,
-                ..view.clone()
-            },
-            500
-        ));
-        assert!(!orbit.matches(
-            &Viewport {
-                zoom: 1e40,
-                ..view.clone()
-            },
-            500
-        ));
-        assert!(!orbit.matches(&view, 501));
-        assert!(!orbit.matches(&Viewport::from_f64(-0.1, 0.2, 1e12), 500));
+        let orbit = ReferenceOrbit::compute(&view, 500, 1.0);
+        assert!(orbit.matches(&view, 500, 1.0));
+        assert!(orbit.matches(&view, 500, 0.5));
+        assert!(!orbit.matches(&view, 500, 2.0));
+        let wider = Viewport {
+            zoom: 1e11,
+            ..view.clone()
+        };
+        assert!(!orbit.matches(&wider, 500, 1.0));
+        let deeper = Viewport {
+            zoom: 1e40,
+            ..view.clone()
+        };
+        assert!(!orbit.matches(&deeper, 500, 1.0));
+        assert!(!orbit.matches(&view, 501, 1.0));
+        assert!(!orbit.matches(&Viewport::from_f64(-0.1, 0.2, 1e12), 500, 1.0));
     }
 }

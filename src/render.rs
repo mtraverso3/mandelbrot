@@ -96,7 +96,7 @@ const ANCHOR_POSITION: f64 = 4.0;
 /// Fewer escaped probe points than this are too few to fit bands to.
 const MIN_PROBE_ESCAPES: usize = 32;
 const CYCLE_CHECK_START: usize = 16;
-const BASE_VIEW_WIDTH: f64 = 3.0;
+pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
 /// The band width and phase for a view, given its zoom-based band width and the probe's smooth
@@ -150,10 +150,12 @@ impl Renderer {
     /// Like [`Renderer::new`], but reuses the reference orbit and color bands of `previous`
     /// where they still apply, e.g. for other bands or resolutions of the same view.
     pub fn reusing(view: &Viewport, opts: &RenderOptions, previous: Option<&Renderer>) -> Self {
+        // Rounded up so slightly different resolutions of a view can share one orbit
+        let aspect = (opts.height as f64 / opts.width.max(1) as f64 * 8.0).ceil() / 8.0;
         let orbit = (view.zoom >= PERTURBATION_ZOOM).then(|| {
             match previous.and_then(|p| p.orbit.as_ref()) {
-                Some(orbit) if orbit.matches(view, opts.max_iterations) => orbit.clone(),
-                _ => Arc::new(ReferenceOrbit::compute(view, opts.max_iterations)),
+                Some(orbit) if orbit.matches(view, opts.max_iterations, aspect) => orbit.clone(),
+                _ => Arc::new(ReferenceOrbit::compute(view, opts.max_iterations, aspect)),
             }
         });
         let mut renderer = Self {
