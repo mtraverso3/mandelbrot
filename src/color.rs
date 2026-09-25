@@ -26,10 +26,11 @@ const AMBIENT_LIGHT: f64 = 0.3;
 const BRIGHTNESS_BOOST: f64 = 1.3;
 
 pub fn palette(position: f64) -> Rgb<u8> {
-    let index = position as usize;
-    let from = PALETTE[index % PALETTE.len()];
+    let position = position.rem_euclid(PALETTE.len() as f64);
+    let index = position as usize % PALETTE.len();
+    let from = PALETTE[index];
     let to = PALETTE[(index + 1) % PALETTE.len()];
-    let t = position % 1.0;
+    let t = position.fract();
     Rgb(std::array::from_fn(|i| {
         (from[i] as f64 * (1.0 - t) + to[i] as f64 * t) as u8
     }))

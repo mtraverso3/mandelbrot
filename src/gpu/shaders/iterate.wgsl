@@ -1,69 +1,20 @@
-struct Params {
-    width: u32,
-    first_row: u32,
-    rows: u32,
-    max_iterations: u32,
-    last: u32,
-    pixel_size: f32,
-    left: f32,
-    top: f32,
-    slice_steps: u32,
-    first_slice: u32,
-    bla_levels: u32,
-    max_skip_radius_sqr: f32,
-}
-
-struct Step {
-    a: vec2<f32>,
-    b: vec2<f32>,
-    radius_sqr: f32,
-}
-
-// Only the derivative's direction is used, so it is kept as mantissa * 2^exponent to stay
-// within f32 range
-struct State {
-    delta: vec2<f32>,
-    derivative: vec2<f32>,
-    checkpoint_reference: vec2<f32>,
-    checkpoint_delta: vec2<f32>,
-    exponent: i32,
-    m: u32,
-    n: u32,
-    next_checkpoint: u32,
-    done: u32,
-}
-
-struct Sample {
-    iterations: u32,
-    norm_sqr: f32,
-    normal: vec2<f32>,
-}
-
-override SKIP: bool;
-override TRACK_DERIVATIVE: bool;
+override SKIP: bool = false;
+override TRACK_DERIVATIVE: bool = false;
 
 const ESCAPE_RADIUS_SQR: f32 = 10000.0;
-const INTERIOR: u32 = 0xffffffffu;
 const DERIVATIVE_LIMIT: f32 = 65536.0;
 const CYCLE_CHECK_START: u32 = 16u;
 // Larger than any orbit point, so no state matches before the first checkpoint
 const NO_CHECKPOINT: f32 = 1e30;
 
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read> orbit: array<vec2<f32>>;
-@group(0) @binding(2) var<storage, read> bla: array<Step>;
-// (offset into bla, length) of each level; level k advances 2^k iterations
-@group(0) @binding(3) var<storage, read> bla_levels: array<vec2<u32>>;
-@group(0) @binding(4) var<storage, read_write> states: array<State>;
-@group(0) @binding(5) var<storage, read_write> samples: array<Sample>;
-@group(0) @binding(6) var<storage, read_write> unfinished: atomic<u32>;
-
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= params.width || id.y >= params.rows {
         return;
     }
     let index = id.y * params.width + id.x;
+    let pixel = vec2(f32(id.x) - params.left, f32(params.first_row + id.y) - params.top);
+    let dc = pixel * params.pixel_size;
     var state: State;
     if params.first_slice != 0u {
         state = State(
@@ -77,15 +28,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             CYCLE_CHECK_START,
             0u,
         );
+        if params.check_bulbs != 0u && in_main_cardioid_or_bulb(params.center + dc) {
+            samples[index] = Sample(INTERIOR, 0.0, vec2(0.0));
+            state.done = 1u;
+            states[index] = state;
+            return;
+        }
     } else {
         state = states[index];
         if state.done != 0u {
             return;
         }
     }
-    let pixel = vec2(f32(id.x) - params.left, f32(params.first_row + id.y) - params.top);
-    let dc = pixel * params.pixel_size;
-
     for (var step = 0u; step < params.slice_steps && state.n < params.max_iterations; step++) {
         var level = -1;
         let delta_sqr = dot(state.delta, state.delta);
@@ -179,10 +133,6 @@ fn normalize_derivative(state: State) -> State {
     return normalized;
 }
 
-fn mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
-    return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
-}
-
 fn exp2_neg(exponent: i32) -> f32 {
     if exponent > 126 {
         return 0.0;
@@ -193,4 +143,13 @@ fn exp2_neg(exponent: i32) -> f32 {
 fn normal(z: vec2<f32>, derivative: vec2<f32>) -> vec2<f32> {
     let u = mul(z, vec2(derivative.x, -derivative.y));
     return u / length(u);
+}
+
+fn in_main_cardioid_or_bulb(c: vec2<f32>) -> bool {
+    let y2 = c.y * c.y;
+    let shifted = c.x - 0.25;
+    let q = shifted * shifted + y2;
+    let in_cardioid = q * (q + shifted) <= 0.25 * y2;
+    let in_period2_bulb = (c.x + 1.0) * (c.x + 1.0) + y2 <= 0.0625;
+    return in_cardioid || in_period2_bulb;
 }
