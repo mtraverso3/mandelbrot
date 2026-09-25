@@ -1,3 +1,6 @@
+#[cfg(target_arch = "wasm32")]
+mod gpu;
+
 use mandelbrot::{Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Renderer, Shading, Viewport};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -13,6 +16,19 @@ fn viewport(x: &str, y: &str, zoom: f64) -> Result<Viewport, JsError> {
         center_y: y.parse()?,
         zoom,
     })
+}
+
+fn options(width: u32, height: u32, max_iterations: u32, normal_shading: bool) -> RenderOptions {
+    RenderOptions {
+        width,
+        height,
+        max_iterations: max_iterations as usize,
+        shading: if normal_shading {
+            Shading::Normal
+        } else {
+            Shading::Flat
+        },
+    }
 }
 
 fn to_strings(view: &Viewport) -> Vec<String> {
@@ -33,16 +49,7 @@ pub fn render_rows_rgba(
     row_count: u32,
 ) -> Result<Vec<u8>, JsError> {
     let view = viewport(center_x, center_y, zoom)?;
-    let opts = RenderOptions {
-        width,
-        height,
-        max_iterations: max_iterations as usize,
-        shading: if normal_shading {
-            Shading::Normal
-        } else {
-            Shading::Flat
-        },
-    };
+    let opts = options(width, height, max_iterations, normal_shading);
     LAST.with_borrow_mut(|last| {
         let renderer = Renderer::reusing(&view, &opts, last.as_ref());
         let row_count = row_count.min(height.saturating_sub(first_row));
