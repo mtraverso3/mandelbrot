@@ -47,6 +47,11 @@ impl Table {
         Self { levels }
     }
 
+    #[cfg(feature = "gpu")]
+    pub(crate) fn levels(&self) -> &[Vec<Step>] {
+        &self.levels
+    }
+
     pub(crate) fn lookup(&self, m: usize, delta_sqr: f64, budget: usize) -> Option<(&Step, usize)> {
         let index = m.checked_sub(1)?;
         let aligned = (index.trailing_zeros() as usize).min(self.levels.len() - 1);

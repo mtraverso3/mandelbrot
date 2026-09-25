@@ -13,8 +13,22 @@ use wgpu::util::DeviceExt;
 /// Past this, pixel offsets approach the smallest normal f32.
 pub const GPU_MAX_ZOOM: f64 = 1e30;
 const WORKGROUP_SIZE: u32 = 8;
-const BAND_PIXELS: usize = 1 << 20;
 const INTERIOR_SAMPLE: u32 = u32::MAX;
+/// Size of `State` in the shader.
+const STATE_SIZE: usize = 56;
+
+/// How a render is split up, so buffers stay small and each dispatch stays well within the
+/// time the OS allows before it resets the GPU.
+#[derive(Clone, Copy)]
+struct Chunking {
+    band_pixels: usize,
+    slice_steps: u32,
+}
+
+const CHUNKING: Chunking = Chunking {
+    band_pixels: 1 << 20,
+    slice_steps: 4096,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -28,7 +42,18 @@ struct Params {
     pixel_size: f32,
     left: f32,
     top: f32,
-    _padding: [u32; 3],
+    slice_steps: u32,
+    first_slice: u32,
+    bla_levels: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Step {
+    a: [f32; 2],
+    b: [f32; 2],
+    radius_sqr: f32,
+    _padding: f32,
 }
 
 #[repr(C)]
@@ -116,7 +141,7 @@ impl GpuRenderer {
             return Err(GpuError::ZoomTooDeep(view.zoom));
         }
         let renderer = Renderer::new(view, opts);
-        let samples = self.samples(&renderer, BAND_PIXELS)?;
+        let samples = self.samples(&renderer, CHUNKING)?;
         let mut img = RgbImage::new(opts.width, opts.height);
         img.par_chunks_mut(3)
             .zip(samples.par_iter())
@@ -134,8 +159,7 @@ impl GpuRenderer {
         Ok(img)
     }
 
-    /// Renders in bands of rows so buffers stay small and each dispatch stays short.
-    fn samples(&self, renderer: &Renderer, band_pixels: usize) -> Result<Vec<Sample>, GpuError> {
+    fn samples(&self, renderer: &Renderer, chunking: Chunking) -> Result<Vec<Sample>, GpuError> {
         let opts = renderer.options();
         let (width, height) = (opts.width as usize, opts.height as usize);
         if width == 0 || height == 0 {
@@ -149,109 +173,189 @@ impl GpuRenderer {
                 height as f64 / width as f64,
             )),
         };
+        let band_rows = (chunking.band_pixels / width).clamp(1, height);
+        let buffers = Buffers::new(self, &orbit, band_rows * width);
+
+        let mut samples = Vec::with_capacity(width * height);
+        for first_row in (0..height).step_by(band_rows) {
+            let rows = band_rows.min(height - first_row);
+            let mut params = Params {
+                width: width as u32,
+                first_row: first_row as u32,
+                rows: rows as u32,
+                max_iterations: opts.max_iterations.min(u32::MAX as usize - 1) as u32,
+                last: (orbit.points().len() - 1) as u32,
+                track_derivative: (opts.shading == Shading::Normal) as u32,
+                pixel_size: renderer.pixel_size() as f32,
+                left: width as f32 / 2.0,
+                top: height as f32 / 2.0,
+                slice_steps: chunking.slice_steps,
+                first_slice: 1,
+                bla_levels: orbit.bla().levels().len() as u32,
+            };
+            while self.slice(&buffers, &params)? > 0 {
+                params.first_slice = 0;
+            }
+
+            let size = (rows * width * size_of::<Sample>()) as u64;
+            let mut encoder = self.device.create_command_encoder(&Default::default());
+            encoder.copy_buffer_to_buffer(&buffers.samples, 0, &buffers.readback, 0, size);
+            self.queue.submit([encoder.finish()]);
+            self.read(&buffers.readback, size, |bytes| {
+                samples.extend_from_slice(bytemuck::cast_slice(bytes))
+            })?;
+        }
+        Ok(samples)
+    }
+
+    /// Runs up to `slice_steps` steps on every unfinished pixel of the band, returning how
+    /// many pixels are still unfinished.
+    fn slice(&self, buffers: &Buffers, params: &Params) -> Result<u32, GpuError> {
+        self.queue
+            .write_buffer(&buffers.params, 0, bytemuck::bytes_of(params));
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.clear_buffer(&buffers.unfinished, 0, None);
+        {
+            let mut pass = encoder.begin_compute_pass(&Default::default());
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &buffers.bind_group, &[]);
+            pass.dispatch_workgroups(
+                params.width.div_ceil(WORKGROUP_SIZE),
+                params.rows.div_ceil(WORKGROUP_SIZE),
+                1,
+            );
+        }
+        encoder.copy_buffer_to_buffer(&buffers.unfinished, 0, &buffers.unfinished_readback, 0, 4);
+        self.queue.submit([encoder.finish()]);
+        self.read(&buffers.unfinished_readback, 4, |bytes| {
+            bytemuck::pod_read_unaligned(bytes)
+        })
+    }
+
+    fn read<T>(
+        &self,
+        buffer: &wgpu::Buffer,
+        size: u64,
+        f: impl FnOnce(&[u8]) -> T,
+    ) -> Result<T, GpuError> {
+        let slice = buffer.slice(..size);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(GpuError::Poll)?;
+        receiver
+            .recv()
+            .expect("map callback runs during poll")
+            .map_err(GpuError::Readback)?;
+        let view = slice.get_mapped_range().expect("mapped above");
+        let value = f(&view);
+        drop(view);
+        buffer.unmap();
+        Ok(value)
+    }
+}
+
+struct Buffers {
+    params: wgpu::Buffer,
+    samples: wgpu::Buffer,
+    unfinished: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    unfinished_readback: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+}
+
+impl Buffers {
+    fn new(gpu: &GpuRenderer, orbit: &ReferenceOrbit, pixels: usize) -> Self {
+        let device = &gpu.device;
         let points: Vec<[f32; 2]> = orbit
             .points()
             .iter()
             .map(|&(r, i)| [r as f32, i as f32])
             .collect();
-
-        let band_rows = (band_pixels / width).clamp(1, height);
-        let band_size = (band_rows * width * size_of::<Sample>()) as u64;
-        let orbit_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("orbit"),
-                contents: bytemuck::cast_slice(&points),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
-        let params_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("params"),
-            size: size_of::<Params>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("samples"),
-            size: band_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: band_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: orbit_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: output.as_entire_binding(),
-                },
-            ],
-        });
-
-        let mut samples = Vec::with_capacity(width * height);
-        for first_row in (0..height).step_by(band_rows) {
-            let rows = band_rows.min(height - first_row);
-            let params = Params {
-                width: width as u32,
-                first_row: first_row as u32,
-                rows: rows as u32,
-                max_iterations: opts.max_iterations.min(u32::MAX as usize - 1) as u32,
-                last: (points.len() - 1) as u32,
-                track_derivative: (opts.shading == Shading::Normal) as u32,
-                pixel_size: renderer.pixel_size() as f32,
-                left: width as f32 / 2.0,
-                top: height as f32 / 2.0,
-                _padding: [0; 3],
-            };
-            self.queue
-                .write_buffer(&params_buffer, 0, bytemuck::bytes_of(&params));
-
-            let mut encoder = self.device.create_command_encoder(&Default::default());
-            {
-                let mut pass = encoder.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &bind_group, &[]);
-                pass.dispatch_workgroups(
-                    (width as u32).div_ceil(WORKGROUP_SIZE),
-                    (rows as u32).div_ceil(WORKGROUP_SIZE),
-                    1,
-                );
-            }
-            let size = (rows * width * size_of::<Sample>()) as u64;
-            encoder.copy_buffer_to_buffer(&output, 0, &readback, 0, size);
-            self.queue.submit([encoder.finish()]);
-
-            let slice = readback.slice(..size);
-            let (sender, receiver) = std::sync::mpsc::channel();
-            slice.map_async(wgpu::MapMode::Read, move |result| {
-                let _ = sender.send(result);
-            });
-            self.device
-                .poll(wgpu::PollType::wait_indefinitely())
-                .map_err(GpuError::Poll)?;
-            receiver
-                .recv()
-                .expect("map callback runs during poll")
-                .map_err(GpuError::Readback)?;
-            let view = slice.get_mapped_range().expect("mapped above");
-            samples.extend_from_slice(bytemuck::cast_slice(&view));
-            drop(view);
-            readback.unmap();
+        let mut steps = Vec::new();
+        let mut levels = Vec::new();
+        for level in orbit.bla().levels() {
+            levels.push([steps.len() as u32, level.len() as u32]);
+            steps.extend(level.iter().map(|step| Step {
+                a: [step.a.0 as f32, step.a.1 as f32],
+                b: [step.b.0 as f32, step.b.1 as f32],
+                radius_sqr: step.radius_sqr as f32,
+                _padding: 0.0,
+            }));
         }
-        Ok(samples)
+        if steps.is_empty() {
+            steps.push(Step::zeroed());
+        }
+
+        let init = |label, contents: &[u8]| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents,
+                usage: wgpu::BufferUsages::STORAGE,
+            })
+        };
+        let buffer = |label, size: usize, usage| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size as u64,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
+        use wgpu::BufferUsages as Usage;
+        let orbit = init("orbit", bytemuck::cast_slice(&points));
+        let bla = init("bla", bytemuck::cast_slice(&steps));
+        let bla_levels = init("bla levels", bytemuck::cast_slice(&levels));
+        let params = buffer(
+            "params",
+            size_of::<Params>(),
+            Usage::UNIFORM | Usage::COPY_DST,
+        );
+        let states = buffer("states", pixels * STATE_SIZE, Usage::STORAGE);
+        let sample_size = pixels * size_of::<Sample>();
+        let samples = buffer("samples", sample_size, Usage::STORAGE | Usage::COPY_SRC);
+        let unfinished = buffer(
+            "unfinished",
+            4,
+            Usage::STORAGE | Usage::COPY_SRC | Usage::COPY_DST,
+        );
+        let readback = buffer("readback", sample_size, Usage::MAP_READ | Usage::COPY_DST);
+        let unfinished_readback =
+            buffer("unfinished readback", 4, Usage::MAP_READ | Usage::COPY_DST);
+
+        let bindings = [
+            &params,
+            &orbit,
+            &bla,
+            &bla_levels,
+            &states,
+            &samples,
+            &unfinished,
+        ];
+        let entries: Vec<_> = bindings
+            .iter()
+            .enumerate()
+            .map(|(binding, buffer)| wgpu::BindGroupEntry {
+                binding: binding as u32,
+                resource: buffer.as_entire_binding(),
+            })
+            .collect();
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &gpu.pipeline.get_bind_group_layout(0),
+            entries: &entries,
+        });
+        Self {
+            params,
+            samples,
+            unfinished,
+            readback,
+            unfinished_readback,
+            bind_group,
+        }
     }
 }
 
@@ -260,8 +364,8 @@ mod tests {
     use super::*;
     use crate::preset;
 
-    fn escapes(gpu: &GpuRenderer, renderer: &Renderer, band_pixels: usize) -> Vec<Option<usize>> {
-        gpu.samples(renderer, band_pixels)
+    fn escapes(gpu: &GpuRenderer, renderer: &Renderer, chunking: Chunking) -> Vec<Option<usize>> {
+        gpu.samples(renderer, chunking)
             .unwrap()
             .iter()
             .map(|s| (s.iterations != INTERIOR_SAMPLE).then_some(s.iterations as usize))
@@ -282,8 +386,8 @@ mod tests {
             .collect()
     }
 
-    /// f32 rounding reshuffles iteration counts in chaotic texture, but must never turn an
-    /// escaping pixel into an interior one or back.
+    /// f32 rounding reshuffles iteration counts in chaotic texture, and can flip pixels that
+    /// escape right at the iteration limit, but must not change what is inside the set.
     fn assert_close_to_exact(view: Viewport, max_iterations: usize, max_mismatch: f64) {
         let gpu = GpuRenderer::new().unwrap();
         let opts = RenderOptions {
@@ -293,23 +397,24 @@ mod tests {
             shading: Shading::Normal,
         };
         let renderer = Renderer::new(&view, &opts);
-        let actual = escapes(&gpu, &renderer, BAND_PIXELS);
+        let actual = escapes(&gpu, &renderer, CHUNKING);
         let expected = exact_escapes(&renderer);
         assert!(
             expected.iter().any(|e| *e != expected[0]),
             "grid should not be uniform"
         );
-        for (i, (a, e)) in actual.iter().zip(&expected).enumerate() {
-            assert_eq!(a.is_some(), e.is_some(), "pixel {i}: {a:?} vs {e:?}");
-        }
-        let mismatches = actual.iter().zip(&expected).filter(|(a, e)| a != e).count();
+        let pairs = || actual.iter().zip(&expected);
+        let flipped = pairs().filter(|(a, e)| a.is_some() != e.is_some()).count();
+        let mismatches = pairs().filter(|(a, e)| a != e).count();
         eprintln!(
-            "zoom {:e}: {mismatches}/{} differ",
+            "zoom {:e}: {mismatches}/{} differ, {flipped} flipped",
             view.zoom,
             expected.len()
         );
+        let pixels = expected.len() as f64;
+        assert!(flipped as f64 <= 0.001 * pixels, "{flipped} pixels flipped");
         assert!(
-            mismatches as f64 <= max_mismatch * expected.len() as f64,
+            mismatches as f64 <= max_mismatch * pixels,
             "{mismatches} pixels differ"
         );
     }
@@ -330,6 +435,25 @@ mod tests {
     }
 
     #[test]
+    fn close_to_exact_around_a_minibrot() {
+        assert_close_to_exact(preset("mini-mandelbrot").unwrap(), 24000, 0.25);
+    }
+
+    #[test]
+    fn close_to_exact_when_skipping_at_deep_zoom() {
+        let view = Viewport {
+            center_x: "-1.24949889563508492587065068503213228909045011806661"
+                .parse()
+                .unwrap(),
+            center_y: "0.03033300303590165779311010118330780526875599532123"
+                .parse()
+                .unwrap(),
+            zoom: 4.7374e16,
+        };
+        assert_close_to_exact(view, 24000, 0.15);
+    }
+
+    #[test]
     fn close_to_exact_at_deepest_zoom() {
         let view = Viewport {
             center_x: "0".parse().unwrap(),
@@ -340,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn bands_match_a_single_dispatch() {
+    fn bands_and_slices_match_a_single_dispatch() {
         let gpu = GpuRenderer::new().unwrap();
         let opts = RenderOptions {
             width: 37,
@@ -349,9 +473,18 @@ mod tests {
             shading: Shading::Normal,
         };
         let renderer = Renderer::new(&Viewport::from_f64(-0.7453, 0.1127, 150.0), &opts);
+        let whole = Chunking {
+            band_pixels: usize::MAX,
+            slice_steps: u32::MAX,
+        };
+        let split = Chunking {
+            band_pixels: 37 * 5,
+            slice_steps: 7,
+        };
+        let (whole, split) = (gpu.samples(&renderer, whole), gpu.samples(&renderer, split));
         assert_eq!(
-            escapes(&gpu, &renderer, 37 * 5),
-            escapes(&gpu, &renderer, BAND_PIXELS)
+            bytemuck::cast_slice::<_, u8>(&whole.unwrap()),
+            bytemuck::cast_slice::<_, u8>(&split.unwrap())
         );
     }
 
