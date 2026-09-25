@@ -303,14 +303,14 @@ impl Renderer {
         self.frame.pixel_size
     }
 
-    /// Colors an escape computed elsewhere, such as on the GPU.
-    pub(crate) fn paint(&self, iterations: usize, norm_sqr: f64, normal: (f64, f64)) -> Rgb<u8> {
-        let smooth = smooth_iterations(iterations, norm_sqr);
-        let base = color::palette(self.frame.smooth_position(smooth));
-        match self.opts.shading {
-            Shading::Flat => base,
-            Shading::Normal => color::shade(base, normal, self.frame.light),
-        }
+    /// `(band scale, band phase)`: an escape's palette position is its smooth iteration
+    /// count divided by the scale, plus the phase.
+    pub(crate) fn color_bands(&self) -> (f64, f64) {
+        (self.frame.band_scale, self.frame.band_phase)
+    }
+
+    pub(crate) fn light(&self) -> (f64, f64) {
+        self.frame.light
     }
 }
 
@@ -394,15 +394,11 @@ pub(crate) struct Escape {
     pub(crate) derivative: (f64, f64),
 }
 
-fn smooth_iterations(iterations: usize, norm_sqr: f64) -> f64 {
-    let log_modulus = norm_sqr.ln() * 0.5;
-    let nu = (log_modulus / std::f64::consts::LN_2).log2();
-    iterations as f64 + 1.0 - nu
-}
-
 impl Escape {
     fn smooth_iterations(&self) -> f64 {
-        smooth_iterations(self.iterations, self.norm_sqr)
+        let log_modulus = self.norm_sqr.ln() * 0.5;
+        let nu = (log_modulus / std::f64::consts::LN_2).log2();
+        self.iterations as f64 + 1.0 - nu
     }
 
     fn normal(&self) -> (f64, f64) {
