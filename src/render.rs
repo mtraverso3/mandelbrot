@@ -87,6 +87,14 @@ const CYCLE_CHECK_START: usize = 16;
 pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
+/// How smooth iteration counts map onto the palette: an escape's position in it is its count
+/// divided by `scale`, plus `phase`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColorBands {
+    pub scale: f64,
+    pub phase: f64,
+}
+
 fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
     if smooth.len() < MIN_PROBE_ESCAPES {
         return (zoom_width, 0.0);
@@ -102,6 +110,29 @@ fn color_bands(zoom_width: f64, smooth: &mut [f64]) -> (f64, f64) {
     // Blending the anchor in with the clamp keeps colors continuous while zooming
     let anchoring = 1.0 - width.min(zoom_width) / width.max(zoom_width);
     (width, anchoring * (ANCHOR_POSITION - low / width))
+}
+
+/// Keeps `previous` where its bands suit the view, so points keep their colors while zooming,
+/// and otherwise changes the scale as little as possible while the median escape keeps its color.
+fn continue_bands(previous: ColorBands, smooth: &mut [f64]) -> ColorBands {
+    if smooth.len() < MIN_PROBE_ESCAPES {
+        return previous;
+    }
+    smooth.sort_by(f64::total_cmp);
+    let percentile = |p: f64| smooth[((smooth.len() - 1) as f64 * p).round() as usize];
+    let (low, median, high) = (percentile(0.1), percentile(0.5), percentile(0.9));
+    let spread = high - low;
+    if spread <= 0.0 {
+        return previous;
+    }
+    let scale = previous.scale.clamp(spread / MAX_BANDS, spread / MIN_BANDS);
+    if scale == previous.scale {
+        return previous;
+    }
+    ColorBands {
+        scale,
+        phase: previous.phase + median / previous.scale - median / scale,
+    }
 }
 
 /// The lowest limit, from the default up by factors of 4, at which almost every point of the
@@ -157,6 +188,17 @@ impl Renderer {
     }
 
     pub fn reusing(view: &Viewport, opts: &RenderOptions, previous: Option<&Renderer>) -> Self {
+        Self::continuing(view, opts, previous, None)
+    }
+
+    /// Like [`Renderer::reusing`], with color bands carried on from `bands`, typically those
+    /// of the previous view, instead of chosen afresh for this one.
+    pub fn continuing(
+        view: &Viewport,
+        opts: &RenderOptions,
+        previous: Option<&Renderer>,
+        bands: Option<ColorBands>,
+    ) -> Self {
         // Rounded up so slightly different resolutions of a view can share one orbit
         let aspect = (opts.height as f64 / opts.width.max(1) as f64 * 8.0).ceil() / 8.0;
         let orbit = (view.zoom >= PERTURBATION_ZOOM).then(|| {
@@ -192,8 +234,13 @@ impl Renderer {
                         _ => None,
                     })
                     .collect();
-                (renderer.frame.band_scale, renderer.frame.band_phase) =
-                    color_bands(renderer.frame.band_scale, &mut smooth);
+                (renderer.frame.band_scale, renderer.frame.band_phase) = match bands {
+                    Some(bands) => {
+                        let bands = continue_bands(bands, &mut smooth);
+                        (bands.scale, bands.phase)
+                    }
+                    None => color_bands(renderer.frame.band_scale, &mut smooth),
+                };
                 renderer.undecided = outcomes
                     .iter()
                     .filter(|outcome| matches!(outcome, Outcome::Undecided))
@@ -229,6 +276,13 @@ impl Renderer {
                 }
             })
             .collect()
+    }
+
+    pub fn color_bands(&self) -> ColorBands {
+        ColorBands {
+            scale: self.frame.band_scale,
+            phase: self.frame.band_phase,
+        }
     }
 
     pub fn reference_orbit(&self) -> Option<&Arc<ReferenceOrbit>> {
@@ -326,12 +380,6 @@ impl Renderer {
 
     pub(crate) fn pixel_size(&self) -> f64 {
         self.frame.pixel_size
-    }
-
-    /// `(band scale, band phase)`: an escape's palette position is its smooth iteration
-    /// count divided by the scale, plus the phase.
-    pub(crate) fn color_bands(&self) -> (f64, f64) {
-        (self.frame.band_scale, self.frame.band_phase)
     }
 
     pub(crate) fn light(&self) -> (f64, f64) {
@@ -776,6 +824,50 @@ mod tests {
     fn color_bands_ignore_views_with_few_escapes() {
         assert_eq!(color_bands(133.0, &mut [100.0; 10]), (133.0, 0.0));
         assert_eq!(color_bands(133.0, &mut [100.0; 100]), (133.0, 0.0));
+    }
+
+    #[test]
+    fn continued_bands_stay_while_they_suit_the_view() {
+        let previous = ColorBands {
+            scale: 20.0,
+            phase: 3.7,
+        };
+        let bands = continue_bands(previous, &mut spread_iterations(300.0, 1000.0));
+        assert_eq!(bands, previous);
+        assert_eq!(continue_bands(previous, &mut [100.0; 10]), previous);
+    }
+
+    #[test]
+    fn continued_bands_move_as_little_as_needed() {
+        let previous = ColorBands {
+            scale: 1e4,
+            phase: 1.25,
+        };
+        let mut iterations = spread_iterations(15000.0, 30000.0);
+        let bands = continue_bands(previous, &mut iterations);
+        assert!((bands.scale - 12000.0 / MIN_BANDS).abs() < 1e-6);
+        let median = 22500.0;
+        let position = |b: ColorBands| median / b.scale + b.phase;
+        assert!((position(bands) - position(previous)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn continuing_carries_bands_to_the_next_view() {
+        let view = Viewport::from_f64(-0.7453, 0.1127, 150.0);
+        let opts = RenderOptions {
+            width: 64,
+            height: 48,
+            max_iterations: 400,
+            shading: Shading::Normal,
+        };
+        let first = Renderer::new(&view, &opts);
+        let closer = view.zoom_at(0.0, 0.0, 1.2);
+        let second = Renderer::continuing(&closer, &opts, None, Some(first.color_bands()));
+        assert_eq!(second.color_bands(), first.color_bands());
+        assert_ne!(
+            Renderer::new(&closer, &opts).color_bands(),
+            first.color_bands()
+        );
     }
 
     #[test]

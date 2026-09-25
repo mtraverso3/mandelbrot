@@ -19,7 +19,7 @@ self.onmessage = async ({ data: job }) => {
         viewer.cancel();
         return;
     }
-    const { generation, view, iterations, normal } = job;
+    const { generation, view, iterations, normal, bands } = job;
     try {
         if (job.kind === 'iterations') {
             const limit = await viewer.autoIterations(view.x, view.y, view.zoom, job.width, job.height);
@@ -30,8 +30,12 @@ self.onmessage = async ({ data: job }) => {
             const finished = await viewer.render(
                 view.x, view.y, view.zoom,
                 width, height, iterations, normal,
-                (firstRow, pixels) => {
-                    const band = { kind: 'band', generation, pass, pixels, width, firstRow, rowCount: pixels.length / 4 / width };
+                bands?.[0] ?? NaN, bands?.[1] ?? NaN,
+                (firstRow, pixels, used) => {
+                    const band = {
+                        kind: 'band', generation, pass, pixels, width, firstRow,
+                        rowCount: pixels.length / 4 / width, bands: Array.from(used),
+                    };
                     self.postMessage(band, [pixels.buffer]);
                 },
             );

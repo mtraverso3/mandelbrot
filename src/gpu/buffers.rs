@@ -46,7 +46,8 @@ impl Params {
     pub(super) fn new(renderer: &Renderer, orbit: &ReferenceOrbit, slice_steps: u32) -> Self {
         let opts = renderer.options();
         let view = renderer.view();
-        let (band_scale, band_phase) = renderer.color_bands();
+        let bands = renderer.color_bands();
+        let (band_scale, band_phase) = (bands.scale, bands.phase);
         let light = renderer.light();
         let (pixel_mantissa, pixel_exponent) = split(renderer.pixel_size());
         let (left, top) = renderer.origin();
