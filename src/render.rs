@@ -1,7 +1,9 @@
 use crate::Coordinate;
 use crate::color::{self, INTERIOR};
+use crate::perturbation::ReferenceOrbit;
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Viewport {
@@ -46,57 +48,123 @@ impl Default for RenderOptions {
     }
 }
 
-const ESCAPE_RADIUS_SQR: f64 = 100.0 * 100.0;
+pub(crate) const ESCAPE_RADIUS_SQR: f64 = 100.0 * 100.0;
+/// Beyond this zoom, `f64` pixel coordinates lose precision and rendering switches to
+/// perturbation around a high-precision reference orbit.
+pub const PERTURBATION_ZOOM: f64 = 1e10;
+/// Deepest supported zoom: pixel offsets and derivatives must still fit in `f64`.
+pub const MAX_ZOOM: f64 = 1e250;
 const LANES: usize = 8;
 const CYCLE_CHECK_START: usize = 16;
 const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
 pub fn render(view: &Viewport, opts: &RenderOptions) -> RgbImage {
-    let mut img = RgbImage::new(opts.width, opts.height);
-    render_rows(view, opts, 0, &mut img);
-    img
+    Renderer::new(view, opts).render()
 }
 
 /// Renders the rows starting at `first_row` into `rows`, a packed RGB buffer holding a whole
 /// number of rows of the full `opts.width` x `opts.height` image.
 pub fn render_rows(view: &Viewport, opts: &RenderOptions, first_row: u32, rows: &mut [u8]) {
-    let row_len = opts.width as usize * 3;
-    if row_len == 0 || rows.is_empty() {
-        return;
-    }
-    assert!(
-        rows.len().is_multiple_of(row_len)
-            && first_row as usize + rows.len() / row_len <= opts.height as usize,
-        "row buffer must hold whole rows within the image"
-    );
-    match opts.shading {
-        Shading::Flat => render_rows_with::<false>(view, opts, first_row, rows),
-        Shading::Normal => render_rows_with::<true>(view, opts, first_row, rows),
-    }
+    Renderer::new(view, opts).render_rows(first_row, rows);
 }
 
-fn render_rows_with<const NORMAL: bool>(
-    view: &Viewport,
-    opts: &RenderOptions,
-    first_row: u32,
-    rows: &mut [u8],
-) {
-    let frame = Frame::new(view, opts);
+/// A prepared view: the pixel grid and, for deep zooms, the reference orbit, which can be
+/// shared between renderers of the same center.
+pub struct Renderer {
+    opts: RenderOptions,
+    frame: Frame,
+    orbit: Option<Arc<ReferenceOrbit>>,
+}
 
-    rows.par_chunks_mut(opts.width as usize * 3)
-        .enumerate()
-        .for_each(|(offset, row)| {
-            let ci = frame.imag(first_row as usize + offset);
-            for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
-                let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
-                let escapes = escape_lanes::<NORMAL>(&cr, ci, opts.max_iterations);
-                let (pixels, _) = pixels.as_chunks_mut::<3>();
-                for (pixel, escape) in pixels.iter_mut().zip(&escapes) {
+impl Renderer {
+    pub fn new(view: &Viewport, opts: &RenderOptions) -> Self {
+        Self::reusing(view, opts, None)
+    }
+
+    /// Like [`Renderer::new`], but reuses `orbit` if it was computed for this center.
+    pub fn reusing(
+        view: &Viewport,
+        opts: &RenderOptions,
+        orbit: Option<Arc<ReferenceOrbit>>,
+    ) -> Self {
+        let orbit = (view.zoom >= PERTURBATION_ZOOM).then(|| match orbit {
+            Some(orbit) if orbit.matches(view, opts.max_iterations) => orbit,
+            _ => Arc::new(ReferenceOrbit::compute(view, opts.max_iterations)),
+        });
+        Self {
+            opts: *opts,
+            frame: Frame::new(view, opts),
+            orbit,
+        }
+    }
+
+    pub fn reference_orbit(&self) -> Option<&Arc<ReferenceOrbit>> {
+        self.orbit.as_ref()
+    }
+
+    pub fn render(&self) -> RgbImage {
+        let mut img = RgbImage::new(self.opts.width, self.opts.height);
+        self.render_rows(0, &mut img);
+        img
+    }
+
+    /// See [`render_rows`].
+    pub fn render_rows(&self, first_row: u32, rows: &mut [u8]) {
+        let row_len = self.opts.width as usize * 3;
+        if row_len == 0 || rows.is_empty() {
+            return;
+        }
+        assert!(
+            rows.len().is_multiple_of(row_len)
+                && first_row as usize + rows.len() / row_len <= self.opts.height as usize,
+            "row buffer must hold whole rows within the image"
+        );
+        match (self.opts.shading, &self.orbit) {
+            (Shading::Flat, None) => self.render_direct::<false>(first_row, rows),
+            (Shading::Normal, None) => self.render_direct::<true>(first_row, rows),
+            (Shading::Flat, Some(orbit)) => self.render_perturbed::<false>(orbit, first_row, rows),
+            (Shading::Normal, Some(orbit)) => self.render_perturbed::<true>(orbit, first_row, rows),
+        }
+    }
+
+    fn render_direct<const NORMAL: bool>(&self, first_row: u32, rows: &mut [u8]) {
+        let frame = &self.frame;
+        let max_iterations = self.opts.max_iterations;
+        rows.par_chunks_mut(self.opts.width as usize * 3)
+            .enumerate()
+            .for_each(|(offset, row)| {
+                let ci = frame.imag(first_row as usize + offset);
+                for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
+                    let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
+                    let escapes = escape_lanes::<NORMAL>(&cr, ci, max_iterations);
+                    let (pixels, _) = pixels.as_chunks_mut::<3>();
+                    for (pixel, escape) in pixels.iter_mut().zip(&escapes) {
+                        *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
+                    }
+                }
+            });
+    }
+
+    fn render_perturbed<const NORMAL: bool>(
+        &self,
+        orbit: &ReferenceOrbit,
+        first_row: u32,
+        rows: &mut [u8],
+    ) {
+        let frame = &self.frame;
+        let max_iterations = self.opts.max_iterations;
+        rows.par_chunks_mut(self.opts.width as usize * 3)
+            .enumerate()
+            .for_each(|(offset, row)| {
+                let dci = frame.offset_y(first_row as usize + offset);
+                let (pixels, _) = row.as_chunks_mut::<3>();
+                for (x, pixel) in pixels.iter_mut().enumerate() {
+                    let escape = orbit.escape::<NORMAL>(frame.offset_x(x), dci, max_iterations);
                     *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
                 }
-            }
-        });
+            });
+    }
 }
 
 struct Frame {
@@ -123,12 +191,20 @@ impl Frame {
         }
     }
 
+    fn offset_x(&self, x: usize) -> f64 {
+        (x as f64 - self.left) * self.pixel_size
+    }
+
+    fn offset_y(&self, y: usize) -> f64 {
+        (y as f64 - self.top) * self.pixel_size
+    }
+
     fn real(&self, x: usize) -> f64 {
-        self.center_x + (x as f64 - self.left) * self.pixel_size
+        self.center_x + self.offset_x(x)
     }
 
     fn imag(&self, y: usize) -> f64 {
-        self.center_y + (y as f64 - self.top) * self.pixel_size
+        self.center_y + self.offset_y(y)
     }
 
     fn color<const NORMAL: bool>(&self, escape: Option<&Escape>) -> Rgb<u8> {
@@ -150,12 +226,12 @@ impl Frame {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Escape {
-    iterations: usize,
-    norm_sqr: f64,
-    z: (f64, f64),
-    derivative: (f64, f64),
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Escape {
+    pub(crate) iterations: usize,
+    pub(crate) norm_sqr: f64,
+    pub(crate) z: (f64, f64),
+    pub(crate) derivative: (f64, f64),
 }
 
 impl Escape {
