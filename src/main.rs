@@ -43,6 +43,10 @@ struct Cli {
     /// Shading mode
     #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().shading)]
     shading: Shading,
+
+    /// Render on the GPU, down to zoom 1e30 (requires the `gpu` feature)
+    #[arg(long, global = true)]
+    gpu: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -126,6 +130,30 @@ fn save_outputs(img: &RgbImage, output: &Path, resize: bool) -> ImageResult<()> 
     Ok(())
 }
 
+fn render_image(
+    view: &Viewport,
+    opts: &RenderOptions,
+    gpu: bool,
+    verbose: bool,
+) -> Result<RgbImage, String> {
+    if !gpu {
+        return Ok(render(view, opts));
+    }
+    #[cfg(feature = "gpu")]
+    {
+        let gpu = mandelbrot::GpuRenderer::new().map_err(|e| e.to_string())?;
+        if verbose {
+            println!("Rendering on {}", gpu.adapter_name());
+        }
+        gpu.render(view, opts).map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "gpu"))]
+    {
+        let _ = verbose;
+        Err("this build has no GPU support; rebuild with `--features gpu`".into())
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let start = Instant::now();
@@ -161,7 +189,13 @@ fn main() -> ExitCode {
         shading: cli.shading,
     };
 
-    let img = render(&view, &opts);
+    let img = match render_image(&view, &opts, cli.gpu, cli.verbose) {
+        Ok(img) => img,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if cli.verbose {
         println!(
             "Rendered {}x{} with {} iterations in {:.3?}",
