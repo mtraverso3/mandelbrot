@@ -6,8 +6,9 @@ import { difference, maxZoom, pan } from './mandelbrot_web.js';
 //
 // The path is a list of segments, each heading for its own target from some zoom on. A new
 // target starts a segment at the deepest keyframe, where the path already passes through its
-// center, so every keyframe keeps covering the path deeper than it as long as the target lies
-// within a quarter of its width.
+// center, so every keyframe keeps covering the path deeper than it as long as the view moves
+// slower than the keyframe's edges grow. Each segment blends in from the one it replaces with
+// a smoothstep, so neither the position nor the direction of motion jumps.
 
 const AHEAD = 2;
 // Zooming this much further than a keyframe stalls until the next one is ready. A little past
@@ -20,9 +21,18 @@ const COVER_TOLERANCE = 1;
 const MIN_KEYFRAME_SCALE = 0.35;
 // Iteration needs change slowly with depth, and choosing them can cost more than a keyframe
 const CHOOSE_ITERATIONS_EVERY = 3;
+// Keyframes closer than this would barely move the zoom along
+const MIN_KEYFRAME_STEP = 2 ** (1 / 8);
 const CROSSFADE_MS = 250;
-// The target's offset from the center shrinks as zoom^-(CENTERING - 1)
+// The target's offset from the center shrinks as zoom^-(centering - 1). Keyframes only cover
+// the path while the view moves by less than their edges grow, so targets far off center are
+// centered more slowly, down to not at all, like zooming in at the cursor.
 const CENTERING = 2;
+const COVER_MARGIN = 0.9;
+// A new path takes over from the old one gradually over this much zoom
+const BLEND = 4;
+// Seconds for the zoom rate to settle, so it eases in and out of speed changes and stalls
+const EASE_SECONDS = 0.5;
 const DETAIL_COLUMNS = 64;
 const SEARCH_RADIUS = 0.15;
 // Interior is white; next to it escapes take the most iterations, so steering avoids it
@@ -57,23 +67,71 @@ export function createAutoZoom(host) {
     let shown = null;
     let fading = null;
     let scale = 1;
+    let rate = 0;
     let rendered = 0;
 
+    function segmentAt(z) {
+        return path.findLast((segment) => segment.zoom <= z) ?? path[0];
+    }
+
+    function centerOf(segment, z) {
+        const shrink = (segment.zoom / z) ** segment.centering;
+        const own = pan(segment.target.x, segment.target.y, z, segment.dx * shrink, segment.dy * shrink);
+        if (!segment.replaces || z >= segment.zoom * BLEND) return own;
+        const t = Math.max(Math.log(z / segment.zoom) / Math.log(BLEND), 0);
+        const weight = t * t * (3 - 2 * t);
+        const old = centerOf(segment.replaces, z);
+        return pan(old[0], old[1], z, weight * difference(own[0], old[0]), weight * difference(own[1], old[1]));
+    }
+
     function viewAt(z) {
-        const segment = path.findLast((segment) => segment.zoom <= z) ?? path[0];
-        const shrink = (segment.zoom / z) ** CENTERING;
-        const [x, y] = pan(segment.target.x, segment.target.y, z, segment.dx * shrink, segment.dy * shrink);
+        const [x, y] = centerOf(segmentAt(z), z);
         return { x, y, zoom: z };
+    }
+
+    // The fastest the view moves while `segment` blends in, as a fraction of how fast the
+    // edges of keyframes grow, which bounds how fast it may move and stay covered
+    function fastest(segment) {
+        const { width, height } = host.size();
+        const steps = 24;
+        let fastest = 0;
+        let [x, y] = centerOf(segment, segment.zoom);
+        for (let i = 1; i <= steps; i++) {
+            const z = segment.zoom * BLEND ** (i / steps);
+            const [nextX, nextY] = centerOf(segment, z);
+            const size = host.pixelSize({ zoom: z }) * (Math.log(BLEND) / steps);
+            const vx = Math.abs(difference(nextX, x)) / size / (width / 2);
+            const vy = Math.abs(difference(nextY, y)) / size / (height / 2);
+            fastest = Math.max(fastest, vx, vy);
+            [x, y] = [nextX, nextY];
+        }
+        return fastest;
     }
 
     // Heads for `target` from zoom `from` on
     function aimFrom(from, target) {
         const view = path.length ? viewAt(from) : host.view();
+        const replaces = path.length ? segmentAt(from) : null;
+        const dx = difference(view.x, target.x);
+        const dy = difference(view.y, target.y);
+        const { width, height } = host.size();
+        const size = host.pixelSize(view);
+        const room = Math.min((width / 2) / Math.abs(dx / size), (height / 2) / Math.abs(dy / size));
+        const segment = { target, zoom: from, dx, dy, centering: Math.max(Math.min(CENTERING, COVER_MARGIN * room), 1), replaces };
+        // Blending into a sharp turn moves faster than either path, so it centers more gently
+        // or, failing that, turns without blending
+        while (segment.replaces && fastest(segment) > 1) {
+            if (segment.centering > 1) segment.centering = Math.max(segment.centering - 0.25, 1);
+            else segment.replaces = null;
+        }
         path = path.filter((segment) => segment.zoom < from && segment.zoom >= 0);
-        path.push({ target, zoom: from, dx: difference(view.x, target.x), dy: difference(view.y, target.y) });
-        // Segments the zoom has passed for good are no longer needed
+        path.push(segment);
+        // Segments the zoom has passed for good, and finished blends, are no longer needed
         const current = path.findLastIndex((segment) => segment.zoom <= zoom);
         if (current > 0) path = path.slice(current);
+        for (const segment of path) {
+            if (zoom >= segment.zoom * BLEND) segment.replaces = null;
+        }
     }
 
     // Scales keyframes so they take about as long to render as the zoom takes to double
@@ -95,15 +153,33 @@ export function createAutoZoom(host) {
         return keyframes.findLast((frame) => covers(frame, view)) ?? null;
     }
 
+    function usable(z) {
+        const best = bestFor(viewAt(z));
+        return best && z / best.view.zoom <= MAX_STRETCH ? best : null;
+    }
+
+    // The deepest zoom up to `far` the keyframes draw
+    function reach(far) {
+        if (usable(far)) return far;
+        let near = zoom;
+        for (let i = 0; i < 12; i++) {
+            const middle = Math.sqrt(near * far);
+            if (usable(middle)) near = middle;
+            else far = middle;
+        }
+        return near;
+    }
+
     function frame(time) {
         const dt = Math.min((time - lastTime) / 1000, 0.1);
         lastTime = time;
-        let next = Math.min(zoom * 2 ** (host.speed() * dt), maxZoom());
-        let best = bestFor(viewAt(next));
-        if (!best || next / best.view.zoom > MAX_STRETCH) {
-            next = zoom;
-            best = bestFor(viewAt(zoom)) ?? shown;
-        }
+        const easing = 1 - Math.exp(-dt / EASE_SECONDS);
+        rate += (host.speed() - rate) * easing;
+        // Eases towards where the keyframes run out, instead of stopping dead there
+        const limit = reach(Math.min(zoom * 2 ** (2 * rate * EASE_SECONDS), maxZoom()));
+        const next = Math.min(zoom * 2 ** (rate * dt), zoom * (limit / zoom) ** easing);
+        if (dt > 0) rate = Math.min(rate, Math.log2(next / zoom) / dt);
+        const best = usable(next) ?? usable(zoom) ?? shown;
         zoom = next;
         const view = viewAt(zoom);
 
@@ -127,15 +203,28 @@ export function createAutoZoom(host) {
         frameRequest = requestAnimationFrame(frame);
     }
 
+    // As deep as the deepest keyframe still covers the path, so the zoom never stalls between
+    // them, and no further than the zoom may stretch it
+    function nextKeyframeZoom() {
+        const deepest = keyframes.at(-1);
+        let far = Math.min(deepest ? deepest.view.zoom * AHEAD : zoom, maxZoom());
+        if (!deepest || covers(deepest, viewAt(far))) return far;
+        let near = deepest.view.zoom;
+        for (let i = 0; i < 8; i++) {
+            const middle = Math.sqrt(near * far);
+            if (covers(deepest, viewAt(middle))) near = middle;
+            else far = middle;
+        }
+        return Math.max(near, deepest.view.zoom * MIN_KEYFRAME_STEP, Math.min(zoom, far));
+    }
+
     function schedule() {
         const deepest = keyframes.at(-1)?.view.zoom ?? zoom / AHEAD;
         if (pending || deepest >= maxZoom() || deepest > zoom * AHEAD) return;
         pending = true;
         const started = epoch;
         const { width, height } = host.size();
-        // Never further past the deepest keyframe than the zoom may stretch it, or the zoom
-        // would stall before reaching the new one
-        const view = viewAt(Math.min(deepest * AHEAD, maxZoom()));
+        const view = viewAt(nextKeyframeZoom());
         const since = performance.now();
         const choose = rendered++ % CHOOSE_ITERATIONS_EVERY === 0;
         host.renderKeyframe(view, Math.round(width * scale), Math.round(height * scale), choose).then((finished) => {
@@ -231,6 +320,7 @@ export function createAutoZoom(host) {
         fading = null;
         pending = false;
         scale = keyframeScale(host.lastRenderSeconds());
+        rate = 0;
         rendered = 0;
         epoch++;
         manualUntil = 0;
