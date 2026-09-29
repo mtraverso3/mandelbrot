@@ -85,7 +85,7 @@ const ANCHOR_POSITION: f64 = 4.0;
 const MIN_PROBE_ESCAPES: usize = 32;
 pub const MAX_AUTO_ITERATIONS: usize = 400_000;
 pub(crate) const UNDECIDED_FRACTION: f64 = 0.01;
-const CYCLE_CHECK_START: usize = 16;
+pub(crate) const CYCLE_CHECK_START: usize = 16;
 pub(crate) const BASE_VIEW_WIDTH: f64 = 3.0;
 const LIGHT_ANGLE_DEGREES: f64 = 45.0;
 
