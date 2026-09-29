@@ -18,62 +18,71 @@
             <button id="toggle-panel" type="button" aria-expanded="true" aria-controls="panel-body" title="Hide controls">–</button>
         </header>
         <div id="panel-body">
-            <label>Location
-                <select id="preset"></select>
-            </label>
-            <label>Shading
-                <select id="shading">
-                    <option value="normal">Normal map</option>
-                    <option value="flat">Flat</option>
+            <select id="preset" aria-label="Location"></select>
+            <div class="row">
+                <button id="autozoom" class="primary" type="button" aria-pressed="false" title="Keep zooming into detail (Space); click the view to steer">▶ Auto zoom</button>
+                <select id="zoom-speed" aria-label="Zoom speed" title="Zoom speed">
+                    <option value="0.35">Slow</option>
+                    <option value="0.7" selected>Normal</option>
+                    <option value="1.4">Fast</option>
                 </select>
-            </label>
-            <div class="field">
-                <label for="iterations">Max iterations</label>
-                <div class="iterations">
-                    <input id="iterations" type="number" min="1" max="10000000" step="500" value="1500">
-                    <label class="checkbox"><input id="auto-iterations" type="checkbox" checked> Auto</label>
-                </div>
             </div>
-            <label>Renderer
-                <select id="backend">
-                    <option value="gpu">GPU</option>
-                    <option value="cpu">CPU</option>
-                </select>
-            </label>
-            <label>Resolution
-                <select id="resolution">
-                    <option value="0.5">Low</option>
-                    <option value="1">Standard</option>
-                    <option value="device" selected>Sharp</option>
-                </select>
-            </label>
-            <div class="buttons">
-                <button id="back" type="button" title="Previous view">← Back</button>
-                <button id="forward" type="button" title="Next view">Forward →</button>
-                <button id="zoom-out" type="button" title="Zoom out 2×">Zoom out</button>
-                <button id="reset" type="button" title="Back to the preset">Reset</button>
-                <div class="autozoom">
-                    <button id="autozoom" type="button" aria-pressed="false" title="Keep zooming into detail (Space); click the view to steer">▶ Auto zoom</button>
-                    <select id="zoom-speed" aria-label="Zoom speed" title="Zoom speed">
-                        <option value="0.35">Slow</option>
-                        <option value="0.7" selected>Normal</option>
-                        <option value="1.4">Fast</option>
-                    </select>
-                </div>
-                <div class="export">
-                    <select id="export-scale" aria-label="Export size" title="Size of the saved image"></select>
-                    <button id="download" type="button" title="Render the view at this size and save it as PNG">Download PNG</button>
-                </div>
+            <div class="row even">
+                <button id="zoom-out" type="button" title="Zoom out 2× (−)">Zoom out</button>
+                <button id="reset" type="button" title="Back to the location (R)">Reset</button>
             </div>
-            <dl id="info">
-                <dt>Center</dt><dd id="center"></dd>
-                <dt>Zoom</dt><dd id="zoom"></dd>
-                <dt>Render</dt><dd id="status"></dd>
-            </dl>
+            <p id="readout"><span id="zoom"></span><span id="status"></span></p>
             <p id="zoom-limit" hidden>This is the deepest supported zoom.</p>
             <p class="hint" id="deep-hint" hidden>Deep views need more iterations: raise the limit if the image is mostly white.</p>
-            <p class="hint">Drag to zoom into an area · Click to zoom in · Shift+click to zoom out · Scroll to zoom · Arrow keys pan, + and − zoom, R resets · Space starts or stops the auto zoom, and clicking steers it</p>
-            <p class="hint">On touch screens: drag to pan · Pinch to zoom · Tap to zoom in</p>
+
+            <details id="settings">
+                <summary>Settings</summary>
+                <div class="section">
+                    <label>Shading
+                        <select id="shading">
+                            <option value="normal">Normal map</option>
+                            <option value="flat">Flat</option>
+                        </select>
+                    </label>
+                    <div class="field">
+                        <label for="iterations">Max iterations</label>
+                        <div class="iterations">
+                            <input id="iterations" type="number" min="1" max="10000000" step="500" value="1500">
+                            <label class="checkbox"><input id="auto-iterations" type="checkbox" checked> Auto</label>
+                        </div>
+                    </div>
+                    <label>Renderer
+                        <select id="backend">
+                            <option value="gpu">GPU</option>
+                            <option value="cpu">CPU</option>
+                        </select>
+                    </label>
+                    <label>Resolution
+                        <select id="resolution">
+                            <option value="0.5">Low</option>
+                            <option value="1">Standard</option>
+                            <option value="device" selected>Sharp</option>
+                        </select>
+                    </label>
+                    <div class="field">
+                        <label for="export-scale">Save image</label>
+                        <div class="row">
+                            <select id="export-scale" title="Size of the saved image"></select>
+                            <button id="download" type="button" title="Render the view at this size and save it as PNG">Download PNG</button>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <span class="caption">Center</span>
+                        <span id="center"></span>
+                    </div>
+                </div>
+            </details>
+
+            <details id="help">
+                <summary>Controls</summary>
+                <p class="hint mouse">Click to zoom in, Shift+click or right-click to zoom out · Drag a box to zoom into it · Scroll to zoom · Arrows pan, + / − zoom, R resets, Space toggles auto zoom · While auto zooming, click to steer</p>
+                <p class="hint touch">Tap to zoom in · Drag to pan · Pinch to zoom · While auto zooming, tap to steer</p>
+            </details>
         </div>
     </aside>
 
