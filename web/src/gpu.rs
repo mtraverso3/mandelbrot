@@ -1,4 +1,5 @@
-use crate::{bands, options, viewport};
+use crate::supersample::BlockRows;
+use crate::{bands, center_samples, options, viewport};
 use mandelbrot::{GpuRenderer, Renderer};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -80,6 +81,7 @@ impl GpuViewer {
         zoom: f64,
         width: u32,
         height: u32,
+        samples: u32,
         max_iterations: u32,
         normal_shading: bool,
         palette: &str,
@@ -89,22 +91,35 @@ impl GpuViewer {
     ) -> Result<js_sys::Promise, JsError> {
         let bands = bands(band_scale, band_phase);
         let view = viewport(center_x, center_y, zoom)?;
-        let opts = options(width, height, max_iterations, normal_shading, palette);
+        let samples = samples.max(1);
+        let opts = options(
+            width * samples,
+            height * samples,
+            max_iterations,
+            normal_shading,
+            palette,
+        );
         self.cancel();
         let inner = self.inner.clone();
         let generation = inner.generation.get();
         Ok(wasm_bindgen_futures::future_to_promise(async move {
-            let renderer = Renderer::continuing(&view, &opts, inner.last.borrow().as_ref(), bands);
+            let renderer = center_samples(
+                Renderer::continuing(&view, &opts, inner.last.borrow().as_ref(), bands),
+                samples,
+            );
             let used = renderer.color_bands();
             let used = js_sys::Float64Array::from(&[used.scale, used.phase][..]);
+            let mut blocks = BlockRows::new(width as usize, samples as usize, 4);
             let finished = inner
                 .gpu
                 .render_rows(
                     &renderer,
                     || inner.generation.get() != generation,
-                    |first_row, rgba| {
-                        let rgba = js_sys::Uint8Array::from(rgba);
-                        let _ = on_rows.call3(&JsValue::NULL, &first_row.into(), &rgba, &used);
+                    |_, rgba| {
+                        if let Some((first_row, rgba)) = blocks.push(rgba) {
+                            let rgba = js_sys::Uint8Array::from(&rgba[..]);
+                            let _ = on_rows.call3(&JsValue::NULL, &first_row.into(), &rgba, &used);
+                        }
                     },
                 )
                 .await

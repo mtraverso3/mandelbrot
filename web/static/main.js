@@ -20,6 +20,7 @@ const KEY_PAN_FRACTION = 0.1;
 const GPU_KEYFRAME_SCALE = 1.5;
 // Renders that finish sooner go straight to full resolution without flashing the preview
 const PREVIEW_DELAY_MS = 150;
+const GPU_AUTO_SAMPLES = 2;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -122,9 +123,9 @@ function dispatch() {
 // Enough bands for every worker even in small renders, which are often the slow ones
 const BANDS_PER_WORKER = 4;
 
-function bandTasks(pass, width, height) {
+function bandTasks(pass, width, height, samples = 1) {
     const fewest = Math.ceil(height / (workers.length * BANDS_PER_WORKER));
-    const rowsPerBand = Math.max(1, Math.min(Math.floor(BAND_PIXELS / width), fewest));
+    const rowsPerBand = Math.max(1, Math.min(Math.floor(BAND_PIXELS / (width * samples * samples)), fewest));
     const tasks = [];
     for (let firstRow = 0; firstRow < height; firstRow += rowsPerBand) {
         tasks.push({
@@ -133,6 +134,7 @@ function bandTasks(pass, width, height) {
             view: job.view,
             width,
             height,
+            samples,
             iterations: state.iterations,
             normal: state.shading === 'normal',
             palette: state.palette,
@@ -192,7 +194,7 @@ function renderBands() {
     const preview = document.createElement('canvas');
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
     preview.height = Math.max(1, Math.ceil(height / PREVIEW_DIVISOR));
-    const passes = [{ pass: 'full', width, height }];
+    const passes = [{ pass: 'full', width, height, samples: antialiasSamples() }];
     if (previewHelps()) passes.unshift({ pass: 'preview', width: preview.width, height: preview.height });
     startJob({ preview, previewRows: 0, fullBands: [] }, passes);
 }
@@ -206,7 +208,7 @@ function exportImage(scale) {
     target.height = height;
     const interrupted = job && !job.exporting && job.elapsed === undefined;
     stopRendering();
-    startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height }]);
+    startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height, samples: antialiasSamples() }]);
 }
 
 // Renders `view` off screen for the automatic zoom, resolving to the finished keyframe
@@ -254,7 +256,7 @@ function dispatchJob() {
             passes: job.passes,
         });
     } else {
-        queue = job.passes.flatMap(({ pass, width, height }) => bandTasks(pass, width, height));
+        queue = job.passes.flatMap(({ pass, width, height, samples }) => bandTasks(pass, width, height, samples));
         dispatch();
     }
 }
@@ -548,6 +550,11 @@ function resolutionScale() {
     return choice === 'device' ? Math.min(window.devicePixelRatio || 1, 2) : Number(choice);
 }
 
+function antialiasSamples() {
+    const choice = $('antialias').value;
+    return choice === 'auto' ? (usesGpu() ? GPU_AUTO_SAMPLES : 1) : Number(choice);
+}
+
 function updateExportScales() {
     const select = $('export-scale');
     const chosen = Number(select.value) || 1;
@@ -681,6 +688,17 @@ function setupControls() {
     });
     $('resolution').addEventListener('change', () => {
         if (resizeCanvas()) render();
+    });
+    const antialias = $('antialias');
+    try {
+        const saved = localStorage.getItem('antialias');
+        if ([...antialias.options].some((option) => option.value === saved)) antialias.value = saved;
+    } catch {}
+    antialias.addEventListener('change', () => {
+        try {
+            localStorage.setItem('antialias', antialias.value);
+        } catch {}
+        render();
     });
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
     $('reset').addEventListener('click', () => {
