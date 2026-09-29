@@ -2,8 +2,8 @@ use clap::builder::PossibleValuesParser;
 use clap::{Args, Parser, Subcommand};
 use image::{ImageFormat, ImageResult, RgbImage};
 use mandelbrot::{
-    Coordinate, MAX_ZOOM, PRESETS, RenderOptions, Shading, Viewport, auto_iterations, downsample,
-    preset, render,
+    Coordinate, MAX_ZOOM, PRESETS, Palette, RenderOptions, Shading, Viewport, auto_iterations,
+    downsample, preset, render,
 };
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -43,6 +43,10 @@ struct Cli {
     /// Shading mode
     #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().shading)]
     shading: Shading,
+
+    /// Color palette
+    #[arg(long, global = true, value_enum, default_value_t = RenderOptions::default().palette)]
+    palette: Palette,
 
     /// Render on the GPU (requires the `gpu` feature)
     #[arg(long, global = true)]
@@ -186,6 +190,7 @@ fn run(cli: &Cli, view: &Viewport, start: Instant) -> Result<(), String> {
             Iterations::Auto => backend.auto_iterations(view, cli.width, cli.height)?,
         },
         shading: cli.shading,
+        palette: cli.palette,
     };
     let img = backend.render(view, &opts)?;
     if cli.verbose {

@@ -1,5 +1,5 @@
 use super::*;
-use crate::{RenderOptions, Viewport, preset, render};
+use crate::{Palette, RenderOptions, Viewport, preset, render};
 
 fn samples(
     gpu: &GpuRenderer,
@@ -64,6 +64,7 @@ fn assert_variant_close_to_exact(
         height: 64,
         max_iterations,
         shading: Shading::Normal,
+        palette: Palette::Classic,
     };
     let renderer = Renderer::new(&view, &opts);
     let mut variant = Variant::new(&renderer);
@@ -141,6 +142,7 @@ fn bands_and_slices_match_a_single_dispatch() {
         height: 23,
         max_iterations: 400,
         shading: Shading::Normal,
+        palette: Palette::Classic,
     };
     let renderer = Renderer::new(&Viewport::from_f64(-0.7453, 0.1127, 150.0), &opts);
     let whole = Chunking {
@@ -209,6 +211,7 @@ fn deep_view_inside_a_minibrot_stays_interior() {
         height: 24,
         max_iterations: 3000,
         shading: Shading::Normal,
+        palette: Palette::Classic,
     };
     let renderer = Renderer::new(&view, &opts);
     assert!(exact_escapes(&renderer).iter().all(Option::is_none));
@@ -226,6 +229,7 @@ fn shading_does_not_change_escapes() {
                 height: 48,
                 max_iterations: 4000,
                 shading,
+                palette: Palette::Classic,
             };
             let renderer = Renderer::new(&view, &opts);
             escapes(&gpu, &renderer, Variant::new(&renderer))
@@ -243,6 +247,7 @@ fn render_produces_requested_dimensions() {
             height,
             max_iterations: 50,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         };
         let img = gpu.render(&Viewport::from_f64(-0.75, 0.0, 1.0), &opts);
         assert_eq!(img.unwrap().dimensions(), (width, height));
@@ -254,29 +259,33 @@ fn render_produces_requested_dimensions() {
 #[test]
 fn colors_match_the_cpu() {
     let gpu = GpuRenderer::new().unwrap();
-    for (view, shading) in [
+    let cases = [
         (preset("mandelbrot").unwrap(), Shading::Normal),
         (preset("mandelbrot").unwrap(), Shading::Flat),
         (Viewport::from_f64(0.2501, 0.0, 1e3), Shading::Normal),
-    ] {
-        let opts = RenderOptions {
-            width: 96,
-            height: 64,
-            max_iterations: 1500,
-            shading,
-        };
-        let (cpu, gpu) = (render(&view, &opts), gpu.render(&view, &opts).unwrap());
-        let differing = cpu
-            .pixels()
-            .zip(gpu.pixels())
-            .filter(|(a, b)| a.0.iter().zip(b.0).any(|(x, y)| x.abs_diff(y) > 2))
-            .count();
-        let pixels = (opts.width * opts.height) as usize;
-        assert!(
-            differing * 100 <= pixels,
-            "{differing}/{pixels} pixels differ at zoom {:e}, {shading:?}",
-            view.zoom
-        );
+    ];
+    for palette in Palette::ALL {
+        for (view, shading) in &cases {
+            let opts = RenderOptions {
+                width: 96,
+                height: 64,
+                max_iterations: 1500,
+                shading: *shading,
+                palette,
+            };
+            let (cpu, gpu) = (render(view, &opts), gpu.render(view, &opts).unwrap());
+            let differing = cpu
+                .pixels()
+                .zip(gpu.pixels())
+                .filter(|(a, b)| a.0.iter().zip(b.0).any(|(x, y)| x.abs_diff(y) > 2))
+                .count();
+            let pixels = (opts.width * opts.height) as usize;
+            assert!(
+                differing * 100 <= pixels,
+                "{differing}/{pixels} pixels differ at zoom {:e}, {shading:?}, {palette:?}",
+                view.zoom
+            );
+        }
     }
 }
 
@@ -333,6 +342,7 @@ fn bulb_test_matches_the_cpu_on_their_boundaries() {
                 height: 48,
                 max_iterations: 1,
                 shading: Shading::Flat,
+                palette: Palette::Classic,
             };
             let renderer = Renderer::unprobed(&view, &opts);
             let actual = samples(&gpu, &renderer, Variant::new(&renderer), CHUNKING);

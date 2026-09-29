@@ -25,6 +25,8 @@ struct Params {
     // so each pixel only adds small terms in its offset: see `in_main_cardioid_or_bulb`
     cardioid: vec4<f32>,
     bulb: vec4<f32>,
+    // RGB, 0-255
+    palette: array<vec4<f32>, 16>,
 }
 
 // Past f32 range, values are also kept as mantissa * 2^exponent

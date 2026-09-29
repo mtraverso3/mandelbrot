@@ -1,5 +1,5 @@
 use crate::Coordinate;
-use crate::color::{self, INTERIOR};
+use crate::color::{self, INTERIOR, Palette};
 use crate::perturbation::{Contraction, ReferenceOrbit};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
@@ -59,6 +59,7 @@ pub struct RenderOptions {
     pub height: u32,
     pub max_iterations: usize,
     pub shading: Shading,
+    pub palette: Palette,
 }
 
 impl Default for RenderOptions {
@@ -68,6 +69,7 @@ impl Default for RenderOptions {
             height: 3280,
             max_iterations: 1500,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         }
     }
 }
@@ -145,6 +147,7 @@ pub fn auto_iterations(view: &Viewport, width: u32, height: u32) -> usize {
             height,
             max_iterations: limit,
             shading: Shading::Flat,
+            palette: Palette::Classic,
         };
         let renderer = Renderer::new(view, &opts);
         let points = PROBE_COLUMNS * probe_rows(width, height);
@@ -396,6 +399,7 @@ struct Frame {
     band_scale: f64,
     band_phase: f64,
     light: (f64, f64),
+    palette: Palette,
 }
 
 impl Frame {
@@ -410,6 +414,7 @@ impl Frame {
             band_scale: (view.zoom + 1.0).log2(),
             band_phase: 0.0,
             light: (angle.cos(), angle.sin()),
+            palette: opts.palette,
         }
     }
 
@@ -440,7 +445,9 @@ impl Frame {
         let Some(escape) = escape else {
             return INTERIOR;
         };
-        let base = color::palette(self.smooth_position(escape.smooth_iterations()));
+        let base = self
+            .palette
+            .color(self.smooth_position(escape.smooth_iterations()));
         if NORMAL {
             color::shade(base, escape.normal(), self.light)
         } else {
@@ -668,6 +675,7 @@ mod tests {
             height,
             max_iterations: 500,
             shading: Shading::Flat,
+            palette: Palette::Classic,
         };
         let frame = Frame::new(&view, &opts);
         for y in 0..height as usize {
@@ -719,9 +727,42 @@ mod tests {
             height: 9,
             max_iterations: 50,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         };
         let img = render(&Viewport::from_f64(-0.75, 0.0, 1.0), &opts);
         assert_eq!(img.dimensions(), (21, 9));
+    }
+
+    #[test]
+    fn palette_changes_only_escape_colors() {
+        let view = Viewport::from_f64(-0.7453, 0.1127, 150.0);
+        let render_with = |palette| {
+            let opts = RenderOptions {
+                width: 48,
+                height: 32,
+                max_iterations: 400,
+                shading: Shading::Flat,
+                palette,
+            };
+            render(&view, &opts)
+        };
+        let classic = render_with(Palette::Classic);
+        for palette in Palette::ALL {
+            let img = render_with(palette);
+            let mut escaped = 0;
+            for (pixel, classic) in img.pixels().zip(classic.pixels()) {
+                assert_eq!(*pixel == INTERIOR, *classic == INTERIOR, "{palette:?}");
+                if *classic != INTERIOR {
+                    escaped += 1;
+                    let [r, g, b] = pixel.0;
+                    assert!(palette != Palette::Mono || (r == g && g == b), "{pixel:?}");
+                }
+            }
+            assert!(escaped > 0);
+            if palette != Palette::Classic {
+                assert_ne!(img, classic, "{palette:?}");
+            }
+        }
     }
 
     #[test]
@@ -732,6 +773,7 @@ mod tests {
             height: 23,
             max_iterations: 400,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         };
         let full = render(&view, &opts);
         let row_len = opts.width as usize * 3;
@@ -859,6 +901,7 @@ mod tests {
             height: 48,
             max_iterations: 400,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         };
         let first = Renderer::new(&view, &opts);
         let closer = view.zoom_at(0.0, 0.0, 1.2);
@@ -882,6 +925,7 @@ mod tests {
             height: 600,
             max_iterations: 500,
             shading: Shading::Normal,
+            palette: Palette::Classic,
         };
         let preview = RenderOptions {
             width: 200,

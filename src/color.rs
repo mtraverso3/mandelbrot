@@ -1,6 +1,8 @@
 use image::Rgb;
 
-const PALETTE: [[u8; 3]; 16] = [
+pub(crate) const PALETTE_SIZE: usize = 16;
+
+const CLASSIC: [[u8; 3]; PALETTE_SIZE] = [
     [66, 30, 15],
     [25, 7, 26],
     [9, 1, 47],
@@ -19,21 +21,144 @@ const PALETTE: [[u8; 3]; 16] = [
     [106, 52, 3],
 ];
 
+const FIRE: [[u8; 3]; PALETTE_SIZE] = [
+    [20, 0, 0],
+    [60, 4, 0],
+    [110, 10, 0],
+    [160, 25, 0],
+    [205, 50, 0],
+    [235, 90, 5],
+    [250, 135, 20],
+    [255, 180, 50],
+    [255, 220, 110],
+    [255, 245, 190],
+    [250, 210, 120],
+    [235, 160, 50],
+    [200, 100, 15],
+    [150, 50, 5],
+    [95, 20, 0],
+    [50, 5, 0],
+];
+
+const OCEAN: [[u8; 3]; PALETTE_SIZE] = [
+    [2, 10, 30],
+    [4, 24, 58],
+    [6, 42, 88],
+    [8, 64, 116],
+    [10, 90, 140],
+    [18, 118, 160],
+    [34, 148, 176],
+    [64, 178, 190],
+    [110, 206, 204],
+    [170, 230, 220],
+    [120, 200, 210],
+    [70, 160, 190],
+    [40, 120, 165],
+    [22, 82, 130],
+    [12, 50, 92],
+    [6, 26, 56],
+];
+
+const MONO: [[u8; 3]; PALETTE_SIZE] = [
+    [14, 14, 14],
+    [23, 23, 23],
+    [47, 47, 47],
+    [84, 84, 84],
+    [127, 127, 127],
+    [170, 170, 170],
+    [207, 207, 207],
+    [231, 231, 231],
+    [240, 240, 240],
+    [231, 231, 231],
+    [207, 207, 207],
+    [170, 170, 170],
+    [127, 127, 127],
+    [84, 84, 84],
+    [47, 47, 47],
+    [23, 23, 23],
+];
+
+const SUNSET: [[u8; 3]; PALETTE_SIZE] = [
+    [16, 8, 40],
+    [40, 14, 72],
+    [72, 20, 100],
+    [110, 28, 120],
+    [150, 36, 128],
+    [192, 52, 122],
+    [226, 80, 108],
+    [246, 118, 94],
+    [252, 160, 90],
+    [254, 204, 120],
+    [255, 236, 180],
+    [236, 178, 140],
+    [196, 120, 130],
+    [140, 70, 120],
+    [80, 36, 90],
+    [36, 16, 58],
+];
+
 pub const INTERIOR: Rgb<u8> = Rgb([255, 255, 255]);
 
 const LIGHT_HEIGHT: f64 = 1.0;
 const AMBIENT_LIGHT: f64 = 0.3;
 const BRIGHTNESS_BOOST: f64 = 1.3;
 
-pub fn palette(position: f64) -> Rgb<u8> {
-    let position = position.rem_euclid(PALETTE.len() as f64);
-    let index = position as usize % PALETTE.len();
-    let from = PALETTE[index];
-    let to = PALETTE[(index + 1) % PALETTE.len()];
-    let t = position.fract();
-    Rgb(std::array::from_fn(|i| {
-        (from[i] as f64 * (1.0 - t) + to[i] as f64 * t) as u8
-    }))
+/// Colors that escapes cycle through, by their position in the color bands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum Palette {
+    #[default]
+    Classic,
+    Fire,
+    Ocean,
+    Mono,
+    Sunset,
+}
+
+impl Palette {
+    pub const ALL: [Palette; 5] = [
+        Palette::Classic,
+        Palette::Fire,
+        Palette::Ocean,
+        Palette::Mono,
+        Palette::Sunset,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Palette::Classic => "classic",
+            Palette::Fire => "fire",
+            Palette::Ocean => "ocean",
+            Palette::Mono => "mono",
+            Palette::Sunset => "sunset",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|palette| palette.name() == name)
+    }
+
+    pub(crate) fn colors(self) -> &'static [[u8; 3]; PALETTE_SIZE] {
+        match self {
+            Palette::Classic => &CLASSIC,
+            Palette::Fire => &FIRE,
+            Palette::Ocean => &OCEAN,
+            Palette::Mono => &MONO,
+            Palette::Sunset => &SUNSET,
+        }
+    }
+
+    pub(crate) fn color(self, position: f64) -> Rgb<u8> {
+        let colors = self.colors();
+        let position = position.rem_euclid(PALETTE_SIZE as f64);
+        let index = position as usize % PALETTE_SIZE;
+        let from = colors[index];
+        let to = colors[(index + 1) % PALETTE_SIZE];
+        let t = position.fract();
+        Rgb(std::array::from_fn(|i| {
+            (from[i] as f64 * (1.0 - t) + to[i] as f64 * t) as u8
+        }))
+    }
 }
 
 pub fn shade(base: Rgb<u8>, normal: (f64, f64), light: (f64, f64)) -> Rgb<u8> {
@@ -43,4 +168,32 @@ pub fn shade(base: Rgb<u8>, normal: (f64, f64), light: (f64, f64)) -> Rgb<u8> {
     Rgb(base
         .0
         .map(|channel| ((channel as f64 * light_factor * BRIGHTNESS_BOOST) as u32).min(255) as u8))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_round_trip() {
+        for palette in Palette::ALL {
+            assert_eq!(Palette::from_name(palette.name()), Some(palette));
+        }
+        assert_eq!(Palette::from_name("plaid"), None);
+    }
+
+    #[test]
+    fn palettes_cycle_through_their_colors() {
+        for palette in Palette::ALL {
+            let colors = palette.colors();
+            for (i, color) in colors.iter().enumerate() {
+                assert_eq!(palette.color(i as f64).0, *color);
+                assert_eq!(palette.color((i + PALETTE_SIZE) as f64).0, *color);
+            }
+            assert_eq!(
+                palette.color(-0.5),
+                palette.color(PALETTE_SIZE as f64 - 0.5)
+            );
+        }
+    }
 }

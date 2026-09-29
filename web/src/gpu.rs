@@ -82,13 +82,14 @@ impl GpuViewer {
         height: u32,
         max_iterations: u32,
         normal_shading: bool,
+        palette: &str,
         band_scale: f64,
         band_phase: f64,
         on_rows: js_sys::Function,
     ) -> Result<js_sys::Promise, JsError> {
         let bands = bands(band_scale, band_phase);
         let view = viewport(center_x, center_y, zoom)?;
-        let opts = options(width, height, max_iterations, normal_shading);
+        let opts = options(width, height, max_iterations, normal_shading, palette);
         self.cancel();
         let inner = self.inner.clone();
         let generation = inner.generation.get();

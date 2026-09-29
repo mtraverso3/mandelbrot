@@ -1,6 +1,8 @@
 use clap::Parser;
 use image::{ImageFormat, Rgb, RgbImage};
-use mandelbrot::{RenderOptions, Shading, Viewport, auto_iterations, downsample, preset, render};
+use mandelbrot::{
+    Palette, RenderOptions, Shading, Viewport, auto_iterations, downsample, preset, render,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -126,6 +128,7 @@ fn render_scenario(location: &str, shading: Shading) -> Scenario {
                 width,
                 height,
                 shading,
+                palette: Palette::Classic,
                 ..RenderOptions::default()
             },
             threads: None,
@@ -182,6 +185,7 @@ fn scenarios() -> Vec<Scenario> {
                 height: 256,
                 max_iterations: 30000,
                 shading: Shading::Normal,
+                palette: Palette::Classic,
             },
             threads: None,
         },
@@ -200,6 +204,7 @@ fn scenarios() -> Vec<Scenario> {
                 height: BENCH_SIZE.1,
                 max_iterations: 3000,
                 shading: Shading::Normal,
+                palette: Palette::Classic,
             },
             threads: None,
         },
@@ -242,6 +247,7 @@ fn gpu_scenarios() -> Vec<Scenario> {
         height: 256,
         max_iterations: 30000,
         shading: Shading::Normal,
+        palette: Palette::Classic,
     };
     [
         (
@@ -272,6 +278,7 @@ fn gpu_scenarios() -> Vec<Scenario> {
                 height: BENCH_SIZE.1,
                 max_iterations: 3000,
                 shading: Shading::Normal,
+                palette: Palette::Classic,
             },
         ),
     ]

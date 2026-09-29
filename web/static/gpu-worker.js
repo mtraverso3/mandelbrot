@@ -19,7 +19,7 @@ self.onmessage = async ({ data: job }) => {
         viewer.cancel();
         return;
     }
-    const { generation, view, iterations, normal, bands } = job;
+    const { generation, view, iterations, normal, palette, bands } = job;
     try {
         if (job.kind === 'iterations') {
             const limit = await viewer.autoIterations(view.x, view.y, view.zoom, job.width, job.height);
@@ -29,7 +29,7 @@ self.onmessage = async ({ data: job }) => {
         for (const { pass, width, height } of job.passes) {
             const finished = await viewer.render(
                 view.x, view.y, view.zoom,
-                width, height, iterations, normal,
+                width, height, iterations, normal, palette,
                 bands?.[0] ?? NaN, bands?.[1] ?? NaN,
                 (firstRow, pixels, used) => {
                     const band = {
