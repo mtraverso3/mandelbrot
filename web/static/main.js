@@ -40,8 +40,6 @@ const state = {
     // [scale, phase] of the colors on screen, which the next render carries on from so points
     // keep their colors while zooming; null to choose them afresh
     bands: null,
-    historyIndex: 0,
-    historyLength: 1,
 };
 
 function showError(message) {
@@ -457,11 +455,9 @@ function hash() {
 
 function writeUrl(push) {
     if (push) {
-        state.historyIndex++;
-        state.historyLength = state.historyIndex + 1;
-        history.pushState({ index: state.historyIndex }, '', hash());
+        history.pushState(null, '', hash());
     } else {
-        history.replaceState({ index: state.historyIndex }, '', hash());
+        history.replaceState(null, '', hash());
     }
     updateControls();
 }
@@ -480,11 +476,10 @@ function navigate(view, { push = true } = {}) {
     render();
 }
 
-window.addEventListener('popstate', (event) => {
+window.addEventListener('popstate', () => {
     stopAutoZoom();
     const from = state.view;
     Object.assign(state, readHash());
-    state.historyIndex = event.state?.index ?? 0;
     reproject(from, state.view);
     updateControls();
     render();
@@ -512,8 +507,6 @@ function updateControls() {
     $('backend').value = gpu.ready ? state.backend : 'cpu';
     $('iterations').value = state.iterations;
     $('auto-iterations').checked = state.autoIterations;
-    $('back').disabled = state.historyIndex === 0;
-    $('forward').disabled = state.historyIndex >= state.historyLength - 1;
     const digits = Math.max(15, Math.ceil(Math.log10(view.zoom)) + 5);
     const imaginary = view.y.startsWith('-') ? `− ${shorten(view.y.slice(1), digits)}` : `+ ${shorten(view.y, digits)}`;
     $('center').textContent = `${shorten(view.x, digits)} ${imaginary}i`;
@@ -528,24 +521,19 @@ function updateStatus() {
         status.textContent = '';
         return;
     }
+    const device = job.onGpu ? 'GPU' : 'CPU';
     if (job.choosing) {
-        status.textContent = `Choosing iteration limit on ${job.onGpu ? 'GPU' : 'CPU'}…`;
+        status.textContent = `Choosing iterations on ${device}…`;
         return;
     }
-    const size = `${job.width}×${job.height}`;
-    const device = job.onGpu ? 'GPU' : 'CPU';
     const seconds = `${((job.elapsed ?? 0) / 1000).toFixed(2)} s`;
     const percent = Math.floor((100 * job.rows) / job.height);
     if (job.exporting) {
-        status.textContent = job.elapsed === undefined
-            ? `Exporting ${size}… ${percent}% on ${device}`
-            : `Exported ${size} in ${seconds} on ${device}`;
+        status.textContent = job.elapsed === undefined ? `Saving… ${percent}%` : `Saved in ${seconds}`;
     } else if (job.keyframe) {
-        status.textContent = `Auto zoom · next frame ${percent}% on ${device}`;
+        status.textContent = `Next frame ${percent}% on ${device}`;
     } else {
-        status.textContent = job.elapsed === undefined
-            ? `Rendering… ${percent}% on ${device}`
-            : `${seconds} at ${size} on ${device}`;
+        status.textContent = job.elapsed === undefined ? `Rendering… ${percent}%` : `${seconds} on ${device}`;
     }
 }
 
@@ -679,8 +667,6 @@ function setupControls() {
     $('resolution').addEventListener('change', () => {
         if (resizeCanvas()) render();
     });
-    $('back').addEventListener('click', () => history.back());
-    $('forward').addEventListener('click', () => history.forward());
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
     $('reset').addEventListener('click', () => {
         state.bands = null;
@@ -693,6 +679,17 @@ function setupControls() {
         setPanelCollapsed(!$('panel').classList.contains('collapsed'));
     });
     setPanelCollapsed(window.matchMedia('(max-width: 600px)').matches);
+    for (const details of document.querySelectorAll('#panel details')) {
+        const key = `open-${details.id}`;
+        try {
+            details.open = localStorage.getItem(key) === 'true';
+        } catch {}
+        details.addEventListener('toggle', () => {
+            try {
+                localStorage.setItem(key, String(details.open));
+            } catch {}
+        });
+    }
 
     let resizeTimer;
     window.addEventListener('resize', () => {
@@ -909,9 +906,7 @@ async function main() {
         return;
     }
     Object.assign(state, readHash());
-    state.historyIndex = history.state?.index ?? 0;
-    state.historyLength = state.historyIndex + 1;
-    history.replaceState({ index: state.historyIndex }, '', hash());
+    history.replaceState(null, '', hash());
 
     setupControls();
     setupPointer();
