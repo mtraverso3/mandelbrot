@@ -26,10 +26,20 @@ self.onmessage = async ({ data: job }) => {
             if (limit !== undefined) self.postMessage({ kind: 'iterations', generation, iterations: limit });
             return;
         }
-        for (const { pass, width, height, samples } of job.passes) {
+        if (job.kind === 'refine') {
+            await viewer.refine(
+                view.x, view.y, view.zoom,
+                job.width, job.height, job.samples, iterations, normal, palette,
+                bands[0], bands[1],
+                job.pixels,
+                (first, pixels) => self.postMessage({ kind: 'pixels', generation, first, pixels }, [pixels.buffer]),
+            );
+            return;
+        }
+        for (const { pass, width, height } of job.passes) {
             const finished = await viewer.render(
                 view.x, view.y, view.zoom,
-                width, height, samples ?? 1, iterations, normal, palette,
+                width, height, iterations, normal, palette,
                 bands?.[0] ?? NaN, bands?.[1] ?? NaN,
                 (firstRow, pixels, used) => {
                     const band = {

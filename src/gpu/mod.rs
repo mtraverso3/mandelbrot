@@ -39,6 +39,7 @@ const CHUNKING: Chunking = Chunking {
     band_pixels: 1 << 20,
     slice_steps: 4096,
 };
+const POINT_ROW: usize = 1024;
 
 #[derive(Debug)]
 pub enum GpuError {
@@ -149,6 +150,7 @@ impl GpuRenderer {
             storage(false),
             storage(false),
             storage(false),
+            storage(true),
         ];
         let entries: Vec<_> = types
             .into_iter()
@@ -312,6 +314,56 @@ impl GpuRenderer {
         .await
     }
 
+    /// Renders arbitrary points, in pixels from the image's top left, a band at a time.
+    pub async fn render_points(
+        &self,
+        renderer: &Renderer,
+        points: impl ExactSizeIterator<Item = [f32; 2]>,
+        cancelled: impl Fn() -> bool,
+        mut on_points: impl FnMut(usize, &[u8]),
+    ) -> Result<bool, GpuError> {
+        let capacity = points
+            .len()
+            .next_multiple_of(POINT_ROW)
+            .min(CHUNKING.band_pixels.next_multiple_of(POINT_ROW));
+        if capacity == 0 {
+            return Ok(true);
+        }
+        let variant = Variant::new(renderer);
+        let (iterate, buffers, mut params) = self.prepare(renderer, variant, CHUNKING, capacity);
+        params.use_points = 1;
+        params.width = POINT_ROW as u32;
+        let mut points = points;
+        let mut band = Vec::with_capacity(capacity);
+        let mut start = 0;
+        loop {
+            band.clear();
+            band.extend(points.by_ref().take(capacity));
+            let Some(&last) = band.last() else {
+                return Ok(true);
+            };
+            let count = band.len();
+            params.rows = count.div_ceil(POINT_ROW) as u32;
+            band.resize(params.rows as usize * POINT_ROW, last);
+            self.queue
+                .write_buffer(&buffers.points, 0, bytemuck::cast_slice(&band));
+            let finished = self
+                .band(
+                    iterate,
+                    &buffers,
+                    params,
+                    Output::Rgba,
+                    &cancelled,
+                    |bytes| on_points(start, &bytes[..count * 4]),
+                )
+                .await?;
+            if !finished {
+                return Ok(false);
+            }
+            start += count;
+        }
+    }
+
     async fn run(
         &self,
         renderer: &Renderer,
@@ -321,48 +373,77 @@ impl GpuRenderer {
         cancelled: &dyn Fn() -> bool,
         on_rows: &mut dyn FnMut(u32, &[u8]),
     ) -> Result<bool, GpuError> {
-        let view = renderer.view();
         let opts = renderer.options();
         let (width, height) = (opts.width as usize, opts.height as usize);
         if width == 0 || height == 0 {
             return Ok(true);
         }
+        let band_rows = (chunking.band_pixels / width).clamp(1, height);
+        let (iterate, buffers, mut params) =
+            self.prepare(renderer, variant, chunking, band_rows * width);
+
+        for first_row in (0..height).step_by(band_rows) {
+            params.first_row = first_row as u32;
+            params.rows = band_rows.min(height - first_row) as u32;
+            let finished = self
+                .band(iterate, &buffers, params, output, cancelled, |bytes| {
+                    on_rows(first_row as u32, bytes)
+                })
+                .await?;
+            if !finished {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn prepare(
+        &self,
+        renderer: &Renderer,
+        variant: Variant,
+        chunking: Chunking,
+        pixels: usize,
+    ) -> (&wgpu::ComputePipeline, Buffers, Params) {
+        let view = renderer.view();
+        let opts = renderer.options();
         let orbit = match renderer.reference_orbit() {
             Some(orbit) => orbit.clone(),
             None => Arc::new(ReferenceOrbit::compute(
                 view,
                 opts.max_iterations,
-                height as f64 / width as f64,
+                opts.height as f64 / opts.width as f64,
             )),
         };
-        let iterate = self.iterate_pipeline(variant);
-        let band_rows = (chunking.band_pixels / width).clamp(1, height);
-        let buffers = Buffers::new(self, &orbit, band_rows * width);
-        let mut params = Params::new(renderer, &orbit, chunking.slice_steps);
+        let buffers = Buffers::new(self, &orbit, pixels);
+        let params = Params::new(renderer, &orbit, chunking.slice_steps);
+        (self.iterate_pipeline(variant), buffers, params)
+    }
 
-        for first_row in (0..height).step_by(band_rows) {
-            params.first_row = first_row as u32;
-            params.rows = band_rows.min(height - first_row) as u32;
-            params.first_slice = 1;
-            loop {
-                if cancelled() {
-                    return Ok(false);
-                }
-                if self.slice(iterate, &buffers, &params, output).await? == 0 {
-                    break;
-                }
-                params.first_slice = 0;
+    async fn band(
+        &self,
+        iterate: &wgpu::ComputePipeline,
+        buffers: &Buffers,
+        mut params: Params,
+        output: Output,
+        cancelled: &dyn Fn() -> bool,
+        on_output: impl FnOnce(&[u8]),
+    ) -> Result<bool, GpuError> {
+        params.first_slice = 1;
+        loop {
+            if cancelled() {
+                return Ok(false);
             }
-            let pixel_size = match output {
-                Output::Rgba => 4,
-                Output::Samples => size_of::<Sample>(),
-            };
-            let size = (params.rows * params.width) as u64 * pixel_size as u64;
-            self.read(&buffers.readback, size, |bytes| {
-                on_rows(params.first_row, bytes)
-            })
-            .await?;
+            if self.slice(iterate, buffers, &params, output).await? == 0 {
+                break;
+            }
+            params.first_slice = 0;
         }
+        let pixel_size = match output {
+            Output::Rgba => 4,
+            Output::Samples => size_of::<Sample>(),
+        };
+        let size = (params.rows * params.width) as u64 * pixel_size as u64;
+        self.read(&buffers.readback, size, on_output).await?;
         Ok(true)
     }
 

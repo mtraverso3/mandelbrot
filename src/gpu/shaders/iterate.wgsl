@@ -19,7 +19,8 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let index = id.y * params.width + id.x;
-    let pixel = vec2(f32(id.x) - params.left, f32(params.first_row + id.y) - params.top);
+    let grid = vec2(f32(id.x), f32(params.first_row + id.y));
+    let pixel = select(grid, points[index], params.use_points != 0u) - vec2(params.left, params.top);
     let dc = pixel * params.pixel_size;
     var state: State;
     if params.first_slice != 0u {

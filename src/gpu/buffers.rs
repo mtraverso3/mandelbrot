@@ -36,7 +36,8 @@ pub(super) struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
-    _padding: [u32; 3],
+    pub(super) use_points: u32,
+    _padding: [u32; 2],
     cardioid: [f32; 4],
     bulb: [f32; 4],
     palette: [[f32; 4]; PALETTE_SIZE],
@@ -75,7 +76,8 @@ impl Params {
             band_phase: band_phase.rem_euclid(PALETTE_SIZE as f64) as f32,
             pixel_mantissa,
             pixel_exponent,
-            _padding: [0; 3],
+            use_points: 0,
+            _padding: [0; 2],
             cardioid,
             bulb,
             palette: opts
@@ -207,6 +209,7 @@ pub(super) struct Buffers {
     pub(super) unfinished: wgpu::Buffer,
     pub(super) readback: wgpu::Buffer,
     pub(super) unfinished_readback: wgpu::Buffer,
+    pub(super) points: wgpu::Buffer,
     pub(super) bind_group: wgpu::BindGroup,
     /// Only bound, but freed with the rest
     inputs: [wgpu::Buffer; 4],
@@ -223,6 +226,7 @@ impl Drop for Buffers {
             &self.unfinished,
             &self.readback,
             &self.unfinished_readback,
+            &self.points,
         ];
         for buffer in outputs.into_iter().chain(&self.inputs) {
             buffer.destroy();
@@ -280,6 +284,7 @@ impl Buffers {
         let readback = buffer("readback", sample_size, Usage::MAP_READ | Usage::COPY_DST);
         let unfinished_readback =
             buffer("unfinished readback", 4, Usage::MAP_READ | Usage::COPY_DST);
+        let points = buffer("points", pixels * 8, Usage::STORAGE | Usage::COPY_DST);
 
         let bindings = [
             &params,
@@ -290,6 +295,7 @@ impl Buffers {
             &samples,
             &unfinished,
             &rgba,
+            &points,
         ];
         let entries: Vec<_> = bindings
             .iter()
@@ -311,6 +317,7 @@ impl Buffers {
             unfinished,
             readback,
             unfinished_readback,
+            points,
             bind_group,
             inputs: [orbit, bla, bla_levels, states],
         }

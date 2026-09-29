@@ -281,12 +281,6 @@ impl Renderer {
             .collect()
     }
 
-    pub fn shifted(mut self, dx: f64, dy: f64) -> Self {
-        self.frame.left -= dx;
-        self.frame.top -= dy;
-        self
-    }
-
     pub fn color_bands(&self) -> ColorBands {
         ColorBands {
             scale: self.frame.band_scale,
@@ -322,6 +316,49 @@ impl Renderer {
         }
     }
 
+    /// Colors arbitrary points, in pixels from the image's top left.
+    pub fn render_points(&self, points: &[[f32; 2]]) -> Vec<[u8; 3]> {
+        match (self.opts.shading, &self.orbit) {
+            (Shading::Flat, None) => self.points_direct::<false>(points),
+            (Shading::Normal, None) => self.points_direct::<true>(points),
+            (Shading::Flat, Some(orbit)) => self.points_perturbed::<false>(orbit, points),
+            (Shading::Normal, Some(orbit)) => self.points_perturbed::<true>(orbit, points),
+        }
+    }
+
+    fn points_direct<const NORMAL: bool>(&self, points: &[[f32; 2]]) -> Vec<[u8; 3]> {
+        let frame = &self.frame;
+        let max_iterations = self.opts.max_iterations;
+        points
+            .par_chunks(LANES)
+            .flat_map_iter(|chunk| {
+                let lane = |i: usize| chunk[i.min(chunk.len() - 1)];
+                let c = std::array::from_fn(|i| frame.point(lane(i)));
+                let escapes =
+                    escape_lanes::<NORMAL>(&c.map(|c| c.0), &c.map(|c| c.1), max_iterations);
+                let colors = escapes.map(|escape| frame.color::<NORMAL>(escape.as_ref()).0);
+                colors.into_iter().take(chunk.len())
+            })
+            .collect()
+    }
+
+    fn points_perturbed<const NORMAL: bool>(
+        &self,
+        orbit: &ReferenceOrbit,
+        points: &[[f32; 2]],
+    ) -> Vec<[u8; 3]> {
+        let frame = &self.frame;
+        let max_iterations = self.opts.max_iterations;
+        points
+            .par_iter()
+            .map(|&[x, y]| {
+                let (dx, dy) = frame.offset_at(x as f64, y as f64);
+                let escape = orbit.escape::<NORMAL>(dx, dy, max_iterations);
+                frame.color::<NORMAL>(escape.as_ref()).0
+            })
+            .collect()
+    }
+
     fn render_direct<const NORMAL: bool>(&self, first_row: u32, rows: &mut [u8]) {
         let frame = &self.frame;
         let max_iterations = self.opts.max_iterations;
@@ -331,7 +368,7 @@ impl Renderer {
                 let ci = frame.imag(first_row as usize + offset);
                 for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
                     let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
-                    let escapes = escape_lanes::<NORMAL>(&cr, ci, max_iterations);
+                    let escapes = escape_lanes::<NORMAL>(&cr, &[ci; LANES], max_iterations);
                     let (pixels, _) = pixels.as_chunks_mut::<3>();
                     for (pixel, escape) in pixels.iter_mut().zip(&escapes) {
                         *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
@@ -439,6 +476,11 @@ impl Frame {
         )
     }
 
+    fn point(&self, [x, y]: [f32; 2]) -> (f64, f64) {
+        let (dx, dy) = self.offset_at(x as f64, y as f64);
+        (self.center_x + dx, self.center_y + dy)
+    }
+
     fn real(&self, x: usize) -> f64 {
         self.center_x + self.offset_x(x)
     }
@@ -514,10 +556,10 @@ struct Block {
 }
 
 impl Block {
-    fn new(cr: &Lanes, ci: f64) -> Self {
+    fn new(cr: &Lanes, ci: &Lanes) -> Self {
         let mut block = Self {
             cr: *cr,
-            ci: [ci; LANES],
+            ci: *ci,
             zr: [0.0; LANES],
             zi: [0.0; LANES],
             dr: [1.0; LANES],
@@ -556,7 +598,7 @@ impl Block {
 
 fn escape_lanes<const TRACK_DERIVATIVE: bool>(
     cr: &Lanes,
-    ci: f64,
+    ci: &Lanes,
     max_iterations: usize,
 ) -> [Option<Escape>; LANES] {
     let mut escapes = [None; LANES];
@@ -688,7 +730,7 @@ mod tests {
             let ci = frame.imag(y);
             for x0 in (0..width as usize).step_by(LANES) {
                 let cr = std::array::from_fn(|lane| frame.real(x0 + lane));
-                let escapes = escape_lanes::<true>(&cr, ci, opts.max_iterations);
+                let escapes = escape_lanes::<true>(&cr, &[ci; LANES], opts.max_iterations);
                 for (lane, escape) in escapes.iter().enumerate() {
                     let actual = escape.map(|e| (e.iterations, e.norm_sqr));
                     let expected = reference_escape(cr[lane], ci, opts.max_iterations);
@@ -793,19 +835,24 @@ mod tests {
     }
 
     #[test]
-    fn shifting_by_whole_pixels_moves_the_image() {
-        let view = crate::preset("spirals").unwrap();
-        let opts = RenderOptions {
-            width: 20,
-            height: 10,
-            ..RenderOptions::default()
-        };
-        let image = Renderer::new(&view, &opts).render();
-        let shifted = Renderer::new(&view, &opts).shifted(3.0, 2.0).render();
-        for (x, y, pixel) in shifted.enumerate_pixels() {
-            if x < 17 && y < 8 {
-                assert_eq!(pixel, image.get_pixel(x + 3, y + 2));
-            }
+    fn points_on_the_grid_match_the_render() {
+        for (zoom, shading) in [(1.0, Shading::Normal), (1e12, Shading::Flat)] {
+            let view = Viewport {
+                zoom,
+                ..crate::preset("spirals").unwrap()
+            };
+            let opts = RenderOptions {
+                width: 21,
+                height: 13,
+                shading,
+                ..RenderOptions::default()
+            };
+            let renderer = Renderer::new(&view, &opts);
+            let points: Vec<[f32; 2]> = (0..13)
+                .flat_map(|y| (0..21).map(move |x| [x as f32, y as f32]))
+                .collect();
+            let colors: Vec<u8> = renderer.render_points(&points).concat();
+            assert_eq!(colors, renderer.render().into_raw(), "zoom {zoom}");
         }
     }
 
@@ -977,7 +1024,7 @@ mod tests {
     #[test]
     fn classify_escapes_match_the_renderer() {
         let cr = std::array::from_fn(|lane| -0.7453 + lane as f64 * 1e-4);
-        let escapes = escape_lanes::<false>(&cr, 0.1127, 2000);
+        let escapes = escape_lanes::<false>(&cr, &[0.1127; LANES], 2000);
         for (lane, escape) in escapes.iter().enumerate() {
             let classified = match classify(cr[lane], 0.1127, 2000) {
                 Outcome::Escaped(e) => Some(e.iterations),

@@ -1,4 +1,4 @@
-import init, { difference, maxZoom, normalizeCoordinate, pan, paletteNames, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
+import init, { difference, maxZoom, refinePixels, normalizeCoordinate, pan, paletteNames, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
 import { createAutoZoom } from './autozoom.js';
 
 const BASE_VIEW_WIDTH = 3;
@@ -20,7 +20,8 @@ const KEY_PAN_FRACTION = 0.1;
 const GPU_KEYFRAME_SCALE = 1.5;
 // Renders that finish sooner go straight to full resolution without flashing the preview
 const PREVIEW_DELAY_MS = 150;
-const GPU_AUTO_SAMPLES = 2;
+const GPU_AUTO_SAMPLES = 3;
+const CPU_AUTO_SAMPLES = 2;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -99,6 +100,8 @@ function onGpuMessage(message) {
     if (message.generation !== generation) return;
     if (message.kind === 'band') {
         drawBand(message);
+    } else if (message.kind === 'pixels') {
+        drawPixels(message);
     } else if (message.kind === 'iterations') {
         onIterations(message.iterations);
     } else if (message.kind === 'failed') {
@@ -107,6 +110,9 @@ function onGpuMessage(message) {
         updateControls();
         if (job.choosing) {
             chooseIterations();
+        } else if (job.refine) {
+            job.onGpu = false;
+            dispatchRefine();
         } else {
             job.onGpu = false;
             dispatchJob();
@@ -123,9 +129,9 @@ function dispatch() {
 // Enough bands for every worker even in small renders, which are often the slow ones
 const BANDS_PER_WORKER = 4;
 
-function bandTasks(pass, width, height, samples = 1) {
+function bandTasks(pass, width, height) {
     const fewest = Math.ceil(height / (workers.length * BANDS_PER_WORKER));
-    const rowsPerBand = Math.max(1, Math.min(Math.floor(BAND_PIXELS / (width * samples * samples)), fewest));
+    const rowsPerBand = Math.max(1, Math.min(Math.floor(BAND_PIXELS / width), fewest));
     const tasks = [];
     for (let firstRow = 0; firstRow < height; firstRow += rowsPerBand) {
         tasks.push({
@@ -134,7 +140,6 @@ function bandTasks(pass, width, height, samples = 1) {
             view: job.view,
             width,
             height,
-            samples,
             iterations: state.iterations,
             normal: state.shading === 'normal',
             palette: state.palette,
@@ -194,7 +199,7 @@ function renderBands() {
     const preview = document.createElement('canvas');
     preview.width = Math.max(1, Math.ceil(width / PREVIEW_DIVISOR));
     preview.height = Math.max(1, Math.ceil(height / PREVIEW_DIVISOR));
-    const passes = [{ pass: 'full', width, height, samples: antialiasSamples() }];
+    const passes = [{ pass: 'full', width, height }];
     if (previewHelps()) passes.unshift({ pass: 'preview', width: preview.width, height: preview.height });
     startJob({ preview, previewRows: 0, fullBands: [] }, passes);
 }
@@ -208,7 +213,7 @@ function exportImage(scale) {
     target.height = height;
     const interrupted = job && !job.exporting && job.elapsed === undefined;
     stopRendering();
-    startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height, samples: antialiasSamples() }]);
+    startJob({ exporting: true, target, interrupted }, [{ pass: 'export', width, height }]);
 }
 
 // Renders `view` off screen for the automatic zoom, resolving to the finished keyframe
@@ -256,7 +261,7 @@ function dispatchJob() {
             passes: job.passes,
         });
     } else {
-        queue = job.passes.flatMap(({ pass, width, height, samples }) => bandTasks(pass, width, height, samples));
+        queue = job.passes.flatMap(({ pass, width, height }) => bandTasks(pass, width, height));
         dispatch();
     }
 }
@@ -265,6 +270,8 @@ function onBand(worker, band) {
     idle.push(worker);
     if (band.generation === generation && band.kind === 'iterations') {
         onIterations(band.iterations);
+    } else if (band.generation === generation && band.kind === 'refine') {
+        drawPixels(band);
     } else if (band.generation === generation) {
         drawBand(band);
     }
@@ -288,15 +295,79 @@ function drawBand({ pass, pixels, width, firstRow, rowCount, bands }) {
     job.rows += rowCount;
     if (pass === 'full') job.fullBands.push({ image, firstRow });
     if (job.rows === job.height) {
-        job.elapsed = performance.now() - job.started;
         if (pass === 'full') {
             keepRendered(state.view);
-            lastRenderSeconds = job.elapsed / 1000;
+            lastRenderSeconds = (performance.now() - job.started) / 1000;
         }
         if (pass === 'full' || pass === 'keyframe') state.bands = bands;
-        if (pass === 'export') finishExport();
-        if (pass === 'keyframe') job.resolve({ canvas: job.target, view: job.view });
+        const samples = pass === 'keyframe' ? 1 : antialiasSamples();
+        if (samples > 1) {
+            startRefine(pass, bands, samples);
+        } else {
+            finishPass(pass);
+        }
     }
+    updateStatus();
+}
+
+function finishPass(pass) {
+    job.elapsed = performance.now() - job.started;
+    if (pass === 'full' && job.refine) keepRendered(state.view);
+    if (pass === 'export') finishExport();
+    if (pass === 'keyframe') job.resolve({ canvas: job.target, view: job.view });
+}
+
+function startRefine(pass, bands, samples) {
+    const target = (pass === 'full' ? canvas : job.target).getContext('2d');
+    const image = target.getImageData(0, 0, job.width, job.height);
+    const pixels = refinePixels(image.data, job.width, job.height);
+    if (!pixels.length) {
+        finishPass(pass);
+        return;
+    }
+    job.refine = { pass, bands, samples, pixels, image, target, done: 0 };
+    dispatchRefine();
+}
+
+function dispatchRefine() {
+    const { pass, bands, samples, pixels } = job.refine;
+    job.refine.done = 0;
+    const task = {
+        generation,
+        kind: 'refine',
+        pass,
+        view: job.view,
+        width: job.width,
+        height: job.height,
+        samples,
+        iterations: state.iterations,
+        normal: state.shading === 'normal',
+        palette: state.palette,
+        bands,
+    };
+    if (job.onGpu) {
+        gpu.worker.postMessage({ ...task, pixels });
+        return;
+    }
+    const perTask = Math.max(1, Math.floor(BAND_PIXELS / (samples * samples)));
+    queue = [];
+    for (let first = 0; first < pixels.length; first += perTask) {
+        queue.push({ ...task, first, pixels: pixels.slice(first, first + perTask) });
+    }
+    dispatch();
+}
+
+function drawPixels({ first, pixels: colors }) {
+    const { pass, pixels, image, target } = job.refine;
+    const count = colors.length / 4;
+    for (let i = 0; i < count; i++) {
+        image.data.set(colors.subarray(i * 4, i * 4 + 4), pixels[first + i] * 4);
+    }
+    const top = Math.floor(pixels[first] / job.width);
+    const bottom = Math.floor(pixels[first + count - 1] / job.width) + 1;
+    target.putImageData(image, 0, 0, 0, top, job.width, bottom - top);
+    job.refine.done += count;
+    if (job.refine.done === pixels.length) finishPass(pass);
     updateStatus();
 }
 
@@ -314,7 +385,7 @@ function finishExport() {
 }
 
 function showPreview(previewed) {
-    if (previewed !== job || job.elapsed !== undefined) return;
+    if (previewed !== job || job.elapsed !== undefined || job.refine) return;
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(job.preview, 0, 0, canvas.width, canvas.height);
     for (const band of job.fullBands) {
@@ -535,13 +606,17 @@ function updateStatus() {
         return;
     }
     const seconds = `${((job.elapsed ?? 0) / 1000).toFixed(2)} s`;
-    const percent = Math.floor((100 * job.rows) / job.height);
+    const percent = job.refine
+        ? Math.floor((100 * job.refine.done) / job.refine.pixels.length)
+        : Math.floor((100 * job.rows) / job.height);
     if (job.exporting) {
         status.textContent = job.elapsed === undefined ? `Saving… ${percent}%` : `Saved in ${seconds}`;
     } else if (job.keyframe) {
         status.textContent = `Next frame ${percent}% on ${device}`;
+    } else if (job.elapsed === undefined) {
+        status.textContent = `${job.refine ? 'Smoothing' : 'Rendering'}… ${percent}%`;
     } else {
-        status.textContent = job.elapsed === undefined ? `Rendering… ${percent}%` : `${seconds} on ${device}`;
+        status.textContent = `${seconds} on ${device}`;
     }
 }
 
@@ -552,7 +627,7 @@ function resolutionScale() {
 
 function antialiasSamples() {
     const choice = $('antialias').value;
-    return choice === 'auto' ? (usesGpu() ? GPU_AUTO_SAMPLES : 1) : Number(choice);
+    return choice === 'auto' ? (usesGpu() ? GPU_AUTO_SAMPLES : CPU_AUTO_SAMPLES) : Number(choice);
 }
 
 function updateExportScales() {
