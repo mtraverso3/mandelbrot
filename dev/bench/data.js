@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790664282926,
+  "lastUpdate": 1790664940239,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -2258,6 +2258,128 @@ window.BENCHMARK_DATA = {
             "range": "± 1.04",
             "unit": "ms",
             "extra": "1024x820 view, chose 384000 iterations; min 112.56 ms, max 115.48 ms, 9 samples; AMD EPYC 7763 64-Core Processor"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "ee77602c0fdc7ed8ed9339a6d74b03e8e5c1ab48",
+          "message": "Add more presets",
+          "timestamp": "2026-09-29T01:53:20-05:00",
+          "tree_id": "9ccd2edc39fa838ef16589eb723dd5543735c302",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/ee77602c0fdc7ed8ed9339a6d74b03e8e5c1ab48"
+        },
+        "date": 1790664939153,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 60.33,
+            "range": "± 5.22",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 57.84 ms, max 76.97 ms, 17 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 46.64,
+            "range": "± 6.98",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 44.15 ms, max 62.07 ms, 20 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 811.31,
+            "range": "± 0.91",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 809.77 ms, max 812.32 ms, 5 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 645.34,
+            "range": "± 9.65",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 640.20 ms, max 663.33 ms, 5 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 772.53,
+            "range": "± 7.32",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 758.41 ms, max 781.11 ms, 5 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 517.47,
+            "range": "± 1.12",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 515.60 ms, max 519.14 ms, 5 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 132.05,
+            "range": "± 0.55",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 131.97 ms, max 133.69 ms, 8 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 726.02,
+            "range": "± 0.59",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 725.09 ms, max 726.50 ms, 3 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 652.1,
+            "range": "± 5.11",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 644.87 ms, max 657.33 ms, 3 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 154.39,
+            "range": "± 0.51",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 153.05 ms, max 154.78 ms, 7 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 57.41,
+            "range": "± 0.23",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 57.21 ms, max 58.30 ms, 18 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 61.07,
+            "range": "± 0.21",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 60.62 ms, max 61.38 ms, 17 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "auto-iterations/mini-mandelbrot",
+            "value": 38.79,
+            "range": "± 0.91",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 96000 iterations; min 37.22 ms, max 40.35 ms, 26 samples; AMD EPYC 9V74 80-Core Processor"
+          },
+          {
+            "name": "auto-iterations/deep-seahorse",
+            "value": 111.61,
+            "range": "± 1.04",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 384000 iterations; min 109.86 ms, max 112.95 ms, 9 samples; AMD EPYC 9V74 80-Core Processor"
           }
         ]
       }
