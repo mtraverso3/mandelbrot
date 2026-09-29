@@ -1,5 +1,5 @@
 use crate::bla;
-use crate::render::{BASE_VIEW_WIDTH, ESCAPE_RADIUS_SQR, Escape, Outcome};
+use crate::render::{BASE_VIEW_WIDTH, CYCLE_CHECK_START, ESCAPE_RADIUS_SQR, Escape, Outcome};
 use crate::{Coordinate, Viewport};
 use num_bigint::BigInt;
 use num_traits::ToPrimitive;
@@ -129,6 +129,8 @@ impl ReferenceOrbit {
         let (mut dr, mut di) = (0.0f64, 0.0f64);
         let (mut der_r, mut der_i) = (1.0f64, 0.0f64);
         let mut contraction = Contraction::new();
+        let mut checkpoint = (f64::NAN, f64::NAN, f64::NAN, f64::NAN);
+        let mut next_checkpoint = CYCLE_CHECK_START;
         let mut m = 0;
         let mut n = 0;
 
@@ -169,6 +171,15 @@ impl ReferenceOrbit {
             }
             if DETECT_INTERIOR && n > 0 && contraction.multiply((2.0 * zr, 2.0 * zi)) {
                 return Outcome::Interior;
+            }
+            // An exactly repeated state means the orbit is periodic and can never escape
+            let state = (ref_r, ref_i, dr, di);
+            if state == checkpoint {
+                return Outcome::Interior;
+            }
+            if n >= next_checkpoint {
+                checkpoint = state;
+                next_checkpoint *= 2;
             }
             if TRACK_DERIVATIVE {
                 let (d2r, d2i) = (der_r * 2.0, der_i * 2.0);
@@ -344,6 +355,20 @@ mod tests {
     fn matches_exact_iteration_near_minibrot() {
         let view = Viewport::from_f64(-1.249559196, 0.030466443, 1.73e6);
         assert_matches_exact(&view, 24, 1500, 576 / 100);
+    }
+
+    #[test]
+    fn repeating_orbits_stop_early_without_the_contraction_test() {
+        let view = Viewport {
+            center_x: "-1.75487766624669276004950889635852869189460661777279"
+                .parse()
+                .unwrap(),
+            center_y: "0".parse().unwrap(),
+            zoom: 1e12,
+        };
+        let orbit = ReferenceOrbit::compute(&view, 20000, 1.0);
+        let outcome = orbit.iterate::<true, true, false>(1e-13, -2e-13, 20000);
+        assert!(matches!(outcome, Outcome::Interior));
     }
 
     #[test]
