@@ -281,6 +281,12 @@ impl Renderer {
             .collect()
     }
 
+    pub fn shifted(mut self, dx: f64, dy: f64) -> Self {
+        self.frame.left -= dx;
+        self.frame.top -= dy;
+        self
+    }
+
     pub fn color_bands(&self) -> ColorBands {
         ColorBands {
             scale: self.frame.band_scale,
@@ -784,6 +790,23 @@ mod tests {
             stitched.extend(band);
         }
         assert_eq!(stitched, full.into_raw());
+    }
+
+    #[test]
+    fn shifting_by_whole_pixels_moves_the_image() {
+        let view = crate::preset("spirals").unwrap();
+        let opts = RenderOptions {
+            width: 20,
+            height: 10,
+            ..RenderOptions::default()
+        };
+        let image = Renderer::new(&view, &opts).render();
+        let shifted = Renderer::new(&view, &opts).shifted(3.0, 2.0).render();
+        for (x, y, pixel) in shifted.enumerate_pixels() {
+            if x < 17 && y < 8 {
+                assert_eq!(pixel, image.get_pixel(x + 3, y + 2));
+            }
+        }
     }
 
     #[test]

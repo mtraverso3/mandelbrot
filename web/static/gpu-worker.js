@@ -26,10 +26,10 @@ self.onmessage = async ({ data: job }) => {
             if (limit !== undefined) self.postMessage({ kind: 'iterations', generation, iterations: limit });
             return;
         }
-        for (const { pass, width, height } of job.passes) {
+        for (const { pass, width, height, samples } of job.passes) {
             const finished = await viewer.render(
                 view.x, view.y, view.zoom,
-                width, height, iterations, normal, palette,
+                width, height, samples ?? 1, iterations, normal, palette,
                 bands?.[0] ?? NaN, bands?.[1] ?? NaN,
                 (firstRow, pixels, used) => {
                     const band = {

@@ -56,7 +56,7 @@ range of 32-bit floats carried with a separate exponent.
 ## Web Viewer
 [mandelbrot.mtraverso.net](https://mandelbrot.mtraverso.net) runs the same renderer compiled to
 WebAssembly, on the GPU through WebGPU or across Web Workers otherwise. It supports zooming by
-click, scroll, drag or pinch, an infinite auto zoom, sharing views by URL, and high-resolution PNG
+click, scroll, drag or pinch, supersampled anti-aliasing, an infinite auto zoom, sharing views by URL, and high-resolution PNG
 downloads.
 
 To run it locally, see [`web/build.sh`](web/build.sh), then serve `dist/` with any static file
