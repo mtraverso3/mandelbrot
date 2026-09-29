@@ -87,7 +87,7 @@ fn deep_step(state_in: State, index: u32, pixel: vec2<f32>) -> State {
         let z = point.z + ldexp(delta.mantissa, vec2(delta.exponent));
         let norm_sqr = dot(z, z);
         if norm_sqr > ESCAPE_RADIUS_SQR {
-            samples[index] = Sample(state.n, norm_sqr, normal(z, state.derivative));
+            samples[index] = escaped(state, z, norm_sqr);
             state.done = 1u;
             return state;
         }

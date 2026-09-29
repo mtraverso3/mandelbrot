@@ -4,6 +4,7 @@ const ITERATION_BLOCK_BITS: u32 = 12u;
 const LIGHT_HEIGHT: f32 = 1.0;
 const AMBIENT_LIGHT: f32 = 0.3;
 const BRIGHTNESS_BOOST: f32 = 1.3;
+const OUTLINE_WIDTH: f32 = 0.5;
 const WHITE: u32 = 0xffffffffu;
 
 @compute @workgroup_size(8, 8)
@@ -20,6 +21,10 @@ fn color(@builtin(global_invocation_id) id: vec3<u32>) {
     var rgb = palette(palette_position(sample));
     if params.normal_shading != 0u {
         rgb = shade(rgb, sample.normal);
+    }
+    if params.outline != 0u {
+        let t = smoothstep(0.0, OUTLINE_WIDTH, sample.distance);
+        rgb = floor(mix(params.outline_color.rgb, rgb, t));
     }
     let channels = vec3<u32>(rgb);
     pixels[index] = channels.x | (channels.y << 8u) | (channels.z << 16u) | 0xff000000u;

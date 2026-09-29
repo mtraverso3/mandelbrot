@@ -99,6 +99,8 @@ const SUNSET: [[u8; 3]; PALETTE_SIZE] = [
 
 pub const INTERIOR: Rgb<u8> = Rgb([255, 255, 255]);
 
+pub(crate) const OUTLINE_WIDTH: f64 = 0.5;
+
 const LIGHT_HEIGHT: f64 = 1.0;
 const AMBIENT_LIGHT: f64 = 0.3;
 const BRIGHTNESS_BOOST: f64 = 1.3;
@@ -161,6 +163,41 @@ impl Palette {
     }
 }
 
+/// What escapes too close to the set to resolve fade into, if anything.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum Outline {
+    #[default]
+    Off,
+    Dark,
+    /// The interior's color, as if the filaments were drawn in
+    Light,
+}
+
+impl Outline {
+    pub const ALL: [Outline; 3] = [Outline::Off, Outline::Dark, Outline::Light];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Outline::Off => "off",
+            Outline::Dark => "dark",
+            Outline::Light => "light",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|outline| outline.name() == name)
+    }
+
+    pub(crate) fn color(self) -> Option<Rgb<u8>> {
+        match self {
+            Outline::Off => None,
+            Outline::Dark => Some(Rgb([0, 0, 0])),
+            Outline::Light => Some(INTERIOR),
+        }
+    }
+}
+
 pub fn shade(base: Rgb<u8>, normal: (f64, f64), light: (f64, f64)) -> Rgb<u8> {
     let t = normal.0 * light.0 + normal.1 * light.1 + LIGHT_HEIGHT;
     let t = t / (1.0 + LIGHT_HEIGHT);
@@ -168,6 +205,16 @@ pub fn shade(base: Rgb<u8>, normal: (f64, f64), light: (f64, f64)) -> Rgb<u8> {
     Rgb(base
         .0
         .map(|channel| ((channel as f64 * light_factor * BRIGHTNESS_BOOST) as u32).min(255) as u8))
+}
+
+/// Fades `rgb` into `edge` as `pixels`, an escape's estimated distance from the set in
+/// pixels, drops below [`OUTLINE_WIDTH`].
+pub fn outline(rgb: Rgb<u8>, edge: Rgb<u8>, pixels: f64) -> Rgb<u8> {
+    let t = (pixels / OUTLINE_WIDTH).clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    Rgb(std::array::from_fn(|i| {
+        (edge[i] as f64 + (rgb[i] as f64 - edge[i] as f64) * t) as u8
+    }))
 }
 
 #[cfg(test)]
@@ -180,6 +227,25 @@ mod tests {
             assert_eq!(Palette::from_name(palette.name()), Some(palette));
         }
         assert_eq!(Palette::from_name("plaid"), None);
+    }
+
+    #[test]
+    fn outline_names_round_trip() {
+        for outline in Outline::ALL {
+            assert_eq!(Outline::from_name(outline.name()), Some(outline));
+        }
+        assert_eq!(Outline::from_name("thick"), None);
+    }
+
+    #[test]
+    fn outline_fades_into_the_edge_near_the_set() {
+        let rgb = Rgb([200, 100, 50]);
+        let edge = Rgb([0, 0, 0]);
+        assert_eq!(outline(rgb, edge, 0.0), edge);
+        assert_eq!(outline(rgb, edge, OUTLINE_WIDTH), rgb);
+        assert_eq!(outline(rgb, edge, 1e300), rgb);
+        let half = outline(rgb, edge, OUTLINE_WIDTH / 2.0);
+        assert_eq!(half, Rgb([100, 50, 25]));
     }
 
     #[test]

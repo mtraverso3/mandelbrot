@@ -2,7 +2,8 @@
 mod gpu;
 
 use mandelbrot::{
-    ColorBands, Coordinate, MAX_ZOOM, PRESETS, Palette, RenderOptions, Renderer, Shading, Viewport,
+    ColorBands, Coordinate, MAX_ZOOM, Outline, PRESETS, Palette, RenderOptions, Renderer, Shading,
+    Viewport,
 };
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
@@ -26,6 +27,7 @@ fn options(
     max_iterations: u32,
     normal_shading: bool,
     palette: &str,
+    outline: &str,
 ) -> RenderOptions {
     RenderOptions {
         width,
@@ -37,6 +39,7 @@ fn options(
             Shading::Flat
         },
         palette: Palette::from_name(palette).unwrap_or_default(),
+        outline: Outline::from_name(outline).unwrap_or_default(),
     }
 }
 
@@ -60,13 +63,21 @@ pub fn render_rows_rgba(
     max_iterations: u32,
     normal_shading: bool,
     palette: &str,
+    outline: &str,
     first_row: u32,
     row_count: u32,
     band_scale: f64,
     band_phase: f64,
 ) -> Result<Vec<u8>, JsError> {
     let view = viewport(center_x, center_y, zoom)?;
-    let opts = options(width, height, max_iterations, normal_shading, palette);
+    let opts = options(
+        width,
+        height,
+        max_iterations,
+        normal_shading,
+        palette,
+        outline,
+    );
     LAST.with_borrow_mut(|last| {
         let renderer =
             Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase));
@@ -98,6 +109,13 @@ pub fn last_bands() -> Vec<f64> {
 pub fn palette_names() -> Vec<String> {
     Palette::ALL
         .map(|palette| palette.name().to_string())
+        .to_vec()
+}
+
+#[wasm_bindgen(js_name = outlineNames)]
+pub fn outline_names() -> Vec<String> {
+    Outline::ALL
+        .map(|outline| outline.name().to_string())
         .to_vec()
 }
 

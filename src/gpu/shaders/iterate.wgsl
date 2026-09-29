@@ -38,7 +38,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
             0u,
         );
         if params.check_bulbs != 0u && in_main_cardioid_or_bulb(dc) {
-            samples[index] = Sample(INTERIOR, 0.0, vec2(0.0));
+            samples[index] = Sample(INTERIOR, 0.0, vec2(0.0), 0.0);
             state.done = 1u;
             states[index] = state;
             return;
@@ -84,7 +84,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
         let z = reference + state.delta;
         let norm_sqr = dot(z, z);
         if norm_sqr > ESCAPE_RADIUS_SQR {
-            samples[index] = Sample(state.n, norm_sqr, normal(z, state.derivative));
+            samples[index] = escaped(state, z, norm_sqr);
             state.done = 1u;
             break;
         }
@@ -119,7 +119,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
 
     if state.done == 0u {
         if state.n >= params.max_iterations {
-            samples[index] = Sample(UNDECIDED, 0.0, vec2(0.0));
+            samples[index] = Sample(UNDECIDED, 0.0, vec2(0.0), 0.0);
             state.done = 1u;
         } else {
             atomicAdd(&unfinished, 1u);
@@ -130,7 +130,7 @@ fn iterate(@builtin(global_invocation_id) id: vec3<u32>) {
 
 fn finish_interior(state_in: State, index: u32) -> State {
     var state = state_in;
-    samples[index] = Sample(INTERIOR, 0.0, vec2(0.0));
+    samples[index] = Sample(INTERIOR, 0.0, vec2(0.0), 0.0);
     state.done = 1u;
     return state;
 }
@@ -185,6 +185,18 @@ fn exp2_neg(exponent: i32) -> f32 {
         return 0.0;
     }
     return ldexp(1.0, min(-exponent, 127));
+}
+
+fn escaped(state: State, z: vec2<f32>, norm_sqr: f32) -> Sample {
+    if !TRACK_DERIVATIVE {
+        return Sample(state.n, norm_sqr, vec2(0.0), 0.0);
+    }
+    // |z| ln|z| / |dz/dc|, over the pixel size, with both powers of two applied at once
+    let derivative = normalize_derivative(state);
+    let modulus = sqrt(norm_sqr);
+    let scale = clamp(-(derivative.exponent + params.pixel_exponent), -100, 100);
+    let distance = modulus * log(modulus) / (length(derivative.derivative) * params.pixel_mantissa);
+    return Sample(state.n, norm_sqr, normal(z, state.derivative), ldexp(distance, scale));
 }
 
 fn normal(z: vec2<f32>, derivative: vec2<f32>) -> vec2<f32> {

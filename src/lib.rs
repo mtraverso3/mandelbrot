@@ -7,7 +7,7 @@ mod perturbation;
 mod render;
 mod resample;
 
-pub use color::Palette;
+pub use color::{Outline, Palette};
 pub use coordinate::{Coordinate, ParseCoordinateError};
 #[cfg(feature = "gpu")]
 pub use gpu::{GpuError, GpuRenderer};

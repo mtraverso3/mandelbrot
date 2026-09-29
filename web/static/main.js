@@ -1,4 +1,4 @@
-import init, { difference, maxZoom, normalizeCoordinate, pan, paletteNames, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
+import init, { difference, maxZoom, normalizeCoordinate, outlineNames, pan, paletteNames, presetNames, presetView, zoomAt as zoomView } from './mandelbrot_web.js';
 import { createAutoZoom } from './autozoom.js';
 
 const BASE_VIEW_WIDTH = 3;
@@ -37,6 +37,7 @@ const state = {
     autoIterations: true,
     shading: 'normal',
     palette: 'classic',
+    outline: 'off',
     backend: 'gpu',
     // [scale, phase] of the colors on screen, which the next render carries on from so points
     // keep their colors while zooming; null to choose them afresh
@@ -136,6 +137,7 @@ function bandTasks(pass, width, height) {
             iterations: state.iterations,
             normal: state.shading === 'normal',
             palette: state.palette,
+            outline: state.outline,
             bands: job.bands,
             firstRow,
             rowCount: Math.min(rowsPerBand, height - firstRow),
@@ -250,6 +252,7 @@ function dispatchJob() {
             iterations: state.iterations,
             normal: state.shading === 'normal',
             palette: state.palette,
+            outline: state.outline,
             bands: job.bands,
             passes: job.passes,
         });
@@ -442,11 +445,12 @@ function readHash() {
         autoIterations: !fixed,
         shading: params.get('s') === 'flat' ? 'flat' : 'normal',
         palette: paletteNames().includes(params.get('c')) ? params.get('c') : 'classic',
+        outline: outlineNames().includes(params.get('o')) ? params.get('o') : 'off',
     };
 }
 
 function hash() {
-    const { view, iterations, autoIterations, shading, palette, preset } = state;
+    const { view, iterations, autoIterations, shading, palette, outline, preset } = state;
     return '#' + new URLSearchParams({
         x: view.x,
         y: view.y,
@@ -454,6 +458,7 @@ function hash() {
         it: autoIterations ? 'auto' : iterations,
         s: shading,
         c: palette,
+        o: outline,
         p: preset,
     });
 }
@@ -506,6 +511,7 @@ function updateControls() {
     $('preset').value = atPreset ? state.preset : 'custom';
     $('shading').value = state.shading;
     $('palette').value = state.palette;
+    $('outline').value = state.outline;
     const gpuOption = $('backend').options[0];
     gpuOption.disabled = !gpu.ready;
     gpuOption.textContent = gpu.ready ? `GPU${gpu.adapter ? ` · ${gpu.adapter}` : ''}` : 'GPU (unavailable)';
@@ -660,6 +666,15 @@ function setupControls() {
     }
     paletteSelect.addEventListener('change', () => {
         state.palette = paletteSelect.value;
+        writeUrl(false);
+        render();
+    });
+    const outlineSelect = $('outline');
+    for (const name of outlineNames()) {
+        outlineSelect.add(new Option(name[0].toUpperCase() + name.slice(1), name));
+    }
+    outlineSelect.addEventListener('change', () => {
+        state.outline = outlineSelect.value;
         writeUrl(false);
         render();
     });

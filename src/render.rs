@@ -1,5 +1,5 @@
 use crate::Coordinate;
-use crate::color::{self, INTERIOR, Palette};
+use crate::color::{self, INTERIOR, Outline, Palette};
 use crate::perturbation::{Contraction, ReferenceOrbit};
 use image::{Rgb, RgbImage};
 use rayon::prelude::*;
@@ -60,6 +60,15 @@ pub struct RenderOptions {
     pub max_iterations: usize,
     pub shading: Shading,
     pub palette: Palette,
+    /// Fades escapes within about a pixel of the set, by their distance estimate, so filaments
+    /// too thin to resolve show as smooth lines instead of noise.
+    pub outline: Outline,
+}
+
+impl RenderOptions {
+    pub(crate) fn tracks_derivative(&self) -> bool {
+        self.shading == Shading::Normal || self.outline != Outline::Off
+    }
 }
 
 impl Default for RenderOptions {
@@ -70,6 +79,7 @@ impl Default for RenderOptions {
             max_iterations: 1500,
             shading: Shading::Normal,
             palette: Palette::Classic,
+            outline: Outline::Off,
         }
     }
 }
@@ -148,6 +158,7 @@ pub fn auto_iterations(view: &Viewport, width: u32, height: u32) -> usize {
             max_iterations: limit,
             shading: Shading::Flat,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let renderer = Renderer::new(view, &opts);
         let points = PROBE_COLUMNS * probe_rows(width, height);
@@ -308,15 +319,15 @@ impl Renderer {
                 && first_row as usize + rows.len() / row_len <= self.opts.height as usize,
             "row buffer must hold whole rows within the image"
         );
-        match (self.opts.shading, &self.orbit) {
-            (Shading::Flat, None) => self.render_direct::<false>(first_row, rows),
-            (Shading::Normal, None) => self.render_direct::<true>(first_row, rows),
-            (Shading::Flat, Some(orbit)) => self.render_perturbed::<false>(orbit, first_row, rows),
-            (Shading::Normal, Some(orbit)) => self.render_perturbed::<true>(orbit, first_row, rows),
+        match (self.opts.tracks_derivative(), &self.orbit) {
+            (false, None) => self.render_direct::<false>(first_row, rows),
+            (true, None) => self.render_direct::<true>(first_row, rows),
+            (false, Some(orbit)) => self.render_perturbed::<false>(orbit, first_row, rows),
+            (true, Some(orbit)) => self.render_perturbed::<true>(orbit, first_row, rows),
         }
     }
 
-    fn render_direct<const NORMAL: bool>(&self, first_row: u32, rows: &mut [u8]) {
+    fn render_direct<const TRACK_DERIVATIVE: bool>(&self, first_row: u32, rows: &mut [u8]) {
         let frame = &self.frame;
         let max_iterations = self.opts.max_iterations;
         rows.par_chunks_mut(self.opts.width as usize * 3)
@@ -325,16 +336,16 @@ impl Renderer {
                 let ci = frame.imag(first_row as usize + offset);
                 for (block, pixels) in row.chunks_mut(3 * LANES).enumerate() {
                     let cr = std::array::from_fn(|lane| frame.real(block * LANES + lane));
-                    let escapes = escape_lanes::<NORMAL>(&cr, ci, max_iterations);
+                    let escapes = escape_lanes::<TRACK_DERIVATIVE>(&cr, ci, max_iterations);
                     let (pixels, _) = pixels.as_chunks_mut::<3>();
                     for (pixel, escape) in pixels.iter_mut().zip(&escapes) {
-                        *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
+                        *pixel = frame.color(escape.as_ref()).0;
                     }
                 }
             });
     }
 
-    fn render_perturbed<const NORMAL: bool>(
+    fn render_perturbed<const TRACK_DERIVATIVE: bool>(
         &self,
         orbit: &ReferenceOrbit,
         first_row: u32,
@@ -348,8 +359,9 @@ impl Renderer {
                 let dci = frame.offset_y(first_row as usize + offset);
                 let (pixels, _) = row.as_chunks_mut::<3>();
                 for (x, pixel) in pixels.iter_mut().enumerate() {
-                    let escape = orbit.escape::<NORMAL>(frame.offset_x(x), dci, max_iterations);
-                    *pixel = frame.color::<NORMAL>(escape.as_ref()).0;
+                    let escape =
+                        orbit.escape::<TRACK_DERIVATIVE>(frame.offset_x(x), dci, max_iterations);
+                    *pixel = frame.color(escape.as_ref()).0;
                 }
             });
     }
@@ -400,6 +412,8 @@ struct Frame {
     band_phase: f64,
     light: (f64, f64),
     palette: Palette,
+    normal: bool,
+    outline: Option<Rgb<u8>>,
 }
 
 impl Frame {
@@ -415,6 +429,8 @@ impl Frame {
             band_phase: 0.0,
             light: (angle.cos(), angle.sin()),
             palette: opts.palette,
+            normal: opts.shading == Shading::Normal,
+            outline: opts.outline.color(),
         }
     }
 
@@ -441,18 +457,20 @@ impl Frame {
         self.center_y + self.offset_y(y)
     }
 
-    fn color<const NORMAL: bool>(&self, escape: Option<&Escape>) -> Rgb<u8> {
+    fn color(&self, escape: Option<&Escape>) -> Rgb<u8> {
         let Some(escape) = escape else {
             return INTERIOR;
         };
-        let base = self
+        let mut rgb = self
             .palette
             .color(self.smooth_position(escape.smooth_iterations()));
-        if NORMAL {
-            color::shade(base, escape.normal(), self.light)
-        } else {
-            base
+        if self.normal {
+            rgb = color::shade(rgb, escape.normal(), self.light);
         }
+        if let Some(edge) = self.outline {
+            rgb = color::outline(rgb, edge, escape.distance() / self.pixel_size);
+        }
+        rgb
     }
 
     fn smooth_position(&self, smooth_iterations: f64) -> f64 {
@@ -483,13 +501,29 @@ impl Escape {
 
     fn normal(&self) -> (f64, f64) {
         let (zr, zi) = self.z;
-        let (dr, di) = self.derivative;
+        let (dr, di) = rescale(self.derivative);
         let der_norm_sqr = dr * dr + di * di;
         let ur = (zr * dr + zi * di) / der_norm_sqr;
         let ui = (zi * dr - zr * di) / der_norm_sqr;
         let length = ur.hypot(ui);
         (ur / length, ui / length)
     }
+
+    /// Estimated distance from the point to the set.
+    fn distance(&self) -> f64 {
+        let modulus = self.norm_sqr.sqrt();
+        modulus * modulus.ln() / self.derivative.0.hypot(self.derivative.1)
+    }
+}
+
+/// Scales by a power of two so the squared norm stays finite, keeping the direction exact.
+fn rescale((x, y): (f64, f64)) -> (f64, f64) {
+    let largest = x.abs().max(y.abs());
+    if largest == 0.0 || !largest.is_finite() {
+        return (x, y);
+    }
+    let scale = 2f64.powi(-(largest.log2().floor() as i32));
+    (x * scale, y * scale)
 }
 
 type Lanes = [f64; LANES];
@@ -676,6 +710,7 @@ mod tests {
             max_iterations: 500,
             shading: Shading::Flat,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let frame = Frame::new(&view, &opts);
         for y in 0..height as usize {
@@ -728,6 +763,7 @@ mod tests {
             max_iterations: 50,
             shading: Shading::Normal,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let img = render(&Viewport::from_f64(-0.75, 0.0, 1.0), &opts);
         assert_eq!(img.dimensions(), (21, 9));
@@ -743,6 +779,7 @@ mod tests {
                 max_iterations: 400,
                 shading: Shading::Flat,
                 palette,
+                outline: Outline::Off,
             };
             render(&view, &opts)
         };
@@ -766,6 +803,62 @@ mod tests {
     }
 
     #[test]
+    fn outline_fades_only_escapes_near_the_set() {
+        let view = Viewport::from_f64(-0.7453, 0.1127, 150.0);
+        let render_with = |outline| {
+            let opts = RenderOptions {
+                width: 48,
+                height: 32,
+                max_iterations: 400,
+                shading: Shading::Flat,
+                palette: Palette::Classic,
+                outline,
+            };
+            render(&view, &opts)
+        };
+        let off = render_with(Outline::Off);
+        let dark = render_with(Outline::Dark);
+        let light = render_with(Outline::Light);
+        let mut faded = 0;
+        for ((off, dark), light) in off.pixels().zip(dark.pixels()).zip(light.pixels()) {
+            assert_eq!(*dark == INTERIOR, *off == INTERIOR);
+            assert!(dark.0.iter().zip(off.0).all(|(d, o)| *d <= o), "{dark:?}");
+            assert!(light.0.iter().zip(off.0).all(|(l, o)| *l >= o), "{light:?}");
+            faded += (dark != off) as usize;
+        }
+        assert!(
+            faded > 0 && faded < off.len() / 3 / 2,
+            "{faded} pixels faded"
+        );
+    }
+
+    #[test]
+    fn perturbed_distances_match_direct_iteration() {
+        let view = Viewport::from_f64(-1.249559196, 0.030466443, 1.73e6);
+        let orbit = ReferenceOrbit::compute(&view, 5000, 1.0);
+        let (cr, ci) = (view.center_x.to_f64(), view.center_y.to_f64());
+        let step = BASE_VIEW_WIDTH / view.zoom / 64.0;
+        let mut compared = 0;
+        for y in -8..8 {
+            let dci = y as f64 * step;
+            let dcr: Lanes = std::array::from_fn(|lane| (lane as f64 - 4.0) * 5.0 * step);
+            let direct = escape_lanes::<true>(&dcr.map(|d| cr + d), ci + dci, 5000);
+            for (lane, direct) in direct.iter().enumerate() {
+                let perturbed = orbit.escape::<true>(dcr[lane], dci, 5000);
+                // Rounding reshuffles iteration counts in chaotic texture
+                if let (Some(direct), Some(perturbed)) = (direct, perturbed)
+                    && direct.iterations == perturbed.iterations
+                {
+                    let ratio = perturbed.distance() / direct.distance();
+                    assert!((ratio - 1.0).abs() < 0.1, "{ratio}");
+                    compared += 1;
+                }
+            }
+        }
+        assert!(compared > 32, "{compared}");
+    }
+
+    #[test]
     fn row_bands_match_full_render() {
         let view = Viewport::from_f64(-0.7453, 0.1127, 150.0);
         let opts = RenderOptions {
@@ -774,6 +867,7 @@ mod tests {
             max_iterations: 400,
             shading: Shading::Normal,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let full = render(&view, &opts);
         let row_len = opts.width as usize * 3;
@@ -902,6 +996,7 @@ mod tests {
             max_iterations: 400,
             shading: Shading::Normal,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let first = Renderer::new(&view, &opts);
         let closer = view.zoom_at(0.0, 0.0, 1.2);
@@ -926,6 +1021,7 @@ mod tests {
             max_iterations: 500,
             shading: Shading::Normal,
             palette: Palette::Classic,
+            outline: Outline::Off,
         };
         let preview = RenderOptions {
             width: 200,

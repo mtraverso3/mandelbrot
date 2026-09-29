@@ -21,11 +21,13 @@ struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
+    outline: u32,
     // The main cardioid's and period-2 bulb's equations expanded around the view's center,
     // so each pixel only adds small terms in its offset: see `in_main_cardioid_or_bulb`
     cardioid: vec4<f32>,
     bulb: vec4<f32>,
     // RGB, 0-255
+    outline_color: vec4<f32>,
     palette: array<vec4<f32>, 16>,
 }
 
@@ -48,8 +50,8 @@ struct Step {
     radius_exponent: i32,
 }
 
-// Only the derivative's direction is used, so it is kept as mantissa * 2^exponent to stay
-// within f32 range. So are delta, while delta_exponent is negative, and the contraction.
+// The derivative is kept as mantissa * 2^exponent to stay within f32 range. So are delta,
+// while delta_exponent is negative, and the contraction.
 struct State {
     delta: vec2<f32>,
     derivative: vec2<f32>,
@@ -69,6 +71,8 @@ struct Sample {
     iterations: u32,
     norm_sqr: f32,
     normal: vec2<f32>,
+    // Estimated distance to the set, in pixels
+    distance: f32,
 }
 
 const INTERIOR: u32 = 0xffffffffu;

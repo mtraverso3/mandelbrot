@@ -164,7 +164,7 @@ impl ReferenceOrbit {
                     iterations: n,
                     norm_sqr,
                     z: (zr, zi),
-                    derivative: rescale(der_r, der_i),
+                    derivative: (der_r, der_i),
                 });
             }
             if DETECT_INTERIOR && n > 0 && contraction.multiply((2.0 * zr, 2.0 * zi)) {
@@ -216,16 +216,6 @@ impl Contraction {
         (self.0, self.1) = (r * scale, i * scale);
         norm_sqr < INTERIOR_CONTRACTION * INTERIOR_CONTRACTION
     }
-}
-
-/// Only the derivative's direction is used; scaling keeps its squared norm finite.
-fn rescale(x: f64, y: f64) -> (f64, f64) {
-    let largest = x.abs().max(y.abs());
-    if largest == 0.0 || !largest.is_finite() {
-        return (x, y);
-    }
-    let scale = 2f64.powi(-(largest.log2().floor() as i32));
-    (x * scale, y * scale)
 }
 
 pub(crate) fn fixed_to_f64(value: &BigInt, frac_bits: u32) -> f64 {

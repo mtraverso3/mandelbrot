@@ -16,6 +16,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 - Deep zoom down to 10²⁵⁰, using perturbation theory past the limits of 64-bit floats
 - Automatic iteration limits, normal-map or flat shading, and optional antialiasing
 - Color palettes: classic, fire, ocean, mono and sunset
+- Optional distance-estimated outlines, which turn filaments too thin to resolve into smooth lines
 - GPU rendering with [wgpu](https://wgpu.rs), natively and through WebGPU in the browser
 
 ## Installation
@@ -40,6 +41,9 @@ mandelbrot custom -x -1.24949889563508492587065068503213228909045011806661 \
 
 # In another palette
 mandelbrot --palette sunset preset -l spirals
+
+# With filaments too thin to resolve drawn as dark lines instead of noise
+mandelbrot --outline dark preset -l spirals
 
 # On the GPU
 mandelbrot --gpu preset -l spirals

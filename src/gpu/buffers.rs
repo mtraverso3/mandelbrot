@@ -6,6 +6,7 @@ use crate::color::PALETTE_SIZE;
 use crate::perturbation::{fixed_to_f64, precision_bits};
 use crate::render::{PERTURBATION_ZOOM, Renderer, Shading, Viewport};
 use bytemuck::{Pod, Zeroable};
+use image::Rgb;
 use wgpu::BufferUsages as Usage;
 use wgpu::util::DeviceExt;
 
@@ -36,9 +37,11 @@ pub(super) struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
-    _padding: [u32; 3],
+    outline: u32,
+    _padding: [u32; 2],
     cardioid: [f32; 4],
     bulb: [f32; 4],
+    outline_color: [f32; 4],
     palette: [[f32; 4]; PALETTE_SIZE],
 }
 
@@ -53,6 +56,7 @@ impl Params {
         let (pixel_mantissa, pixel_exponent) = split(renderer.pixel_size());
         let (left, top) = renderer.origin();
         let (cardioid, bulb) = bulb_terms(view);
+        let outline = opts.outline.color();
         Self {
             width: opts.width,
             first_row: 0,
@@ -75,9 +79,13 @@ impl Params {
             band_phase: band_phase.rem_euclid(PALETTE_SIZE as f64) as f32,
             pixel_mantissa,
             pixel_exponent,
-            _padding: [0; 3],
+            outline: outline.is_some() as u32,
+            _padding: [0; 2],
             cardioid,
             bulb,
+            outline_color: outline.map_or([0.0; 4], |Rgb([r, g, b])| {
+                [r as f32, g as f32, b as f32, 0.0]
+            }),
             palette: opts
                 .palette
                 .colors()
@@ -198,6 +206,9 @@ pub(super) struct Sample {
     pub(super) iterations: u32,
     norm_sqr: f32,
     normal: [f32; 2],
+    /// Estimated distance to the set, in pixels
+    distance: f32,
+    _padding: u32,
 }
 
 pub(super) struct Buffers {

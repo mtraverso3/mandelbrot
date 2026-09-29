@@ -9,10 +9,10 @@ self.onmessage = async ({ data: task }) => {
         self.postMessage({ ...task, iterations: autoIterations(view.x, view.y, view.zoom, width, height) });
         return;
     }
-    const { view, width, height, iterations, normal, palette, firstRow, rowCount, bands } = task;
+    const { view, width, height, iterations, normal, palette, outline, firstRow, rowCount, bands } = task;
     const pixels = renderRows(
         view.x, view.y, view.zoom,
-        width, height, iterations, normal, palette,
+        width, height, iterations, normal, palette, outline,
         firstRow, rowCount,
         bands?.[0] ?? NaN, bands?.[1] ?? NaN,
     );

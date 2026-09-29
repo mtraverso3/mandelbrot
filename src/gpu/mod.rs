@@ -8,7 +8,7 @@ use crate::render::{
     MAX_AUTO_ITERATIONS, PERTURBATION_ZOOM, PROBE_COLUMNS, RenderOptions, Renderer, Shading,
     UNDECIDED_FRACTION, Viewport, probe_rows,
 };
-use crate::{Palette, ReferenceOrbit};
+use crate::{Outline, Palette, ReferenceOrbit};
 use buffers::{Buffers, Params, Sample};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -77,7 +77,7 @@ impl Variant {
             // As on the CPU, skipped blocks are only long enough to pay for their lookups
             // once perturbation is needed
             skip: zoom >= PERTURBATION_ZOOM,
-            track_derivative: renderer.options().shading == Shading::Normal,
+            track_derivative: renderer.options().tracks_derivative(),
             deep: zoom > DEEP_ZOOM,
             detect_interior: false,
         }
@@ -237,6 +237,7 @@ impl GpuRenderer {
                 max_iterations: limit,
                 shading: Shading::Flat,
                 palette: Palette::Classic,
+                outline: Outline::Off,
             };
             let renderer = Renderer::unprobed(view, &opts);
             let variant = Variant {
