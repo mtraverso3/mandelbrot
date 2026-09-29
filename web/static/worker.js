@@ -14,7 +14,7 @@ self.onmessage = async ({ data: task }) => {
         const pixels = renderPixels(
             view.x, view.y, view.zoom,
             width, height, task.samples, iterations, normal, palette,
-            task.pixels,
+            task.pixels, task.round,
             bands[0], bands[1],
         );
         self.postMessage({ ...task, pixels }, [pixels.buffer]);

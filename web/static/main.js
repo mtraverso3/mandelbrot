@@ -22,6 +22,18 @@ const GPU_KEYFRAME_SCALE = 1.5;
 const PREVIEW_DELAY_MS = 150;
 const GPU_AUTO_SAMPLES = 3;
 const CPU_AUTO_SAMPLES = 2;
+const MAX_REFINE_ROUNDS = 16;
+// Summed channel change below which a pixel stops getting more points
+const SETTLED = 4;
+const TO_LINEAR = Float32Array.from({ length: 256 }, (_, i) => {
+    const v = i / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+});
+
+function toSrgb(v) {
+    const s = v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055;
+    return Math.round(Math.min(Math.max(s, 0), 1) * 255);
+}
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('view');
@@ -325,12 +337,26 @@ function startRefine(pass, bands, samples) {
         finishPass(pass);
         return;
     }
-    job.refine = { pass, bands, samples, pixels, image, target, done: 0 };
+    job.refine = {
+        pass,
+        bands,
+        samples,
+        all: pixels,
+        pixels,
+        slots: Uint32Array.from(pixels.keys()),
+        sums: new Float32Array(pixels.length * 3),
+        weights: new Float32Array(pixels.length),
+        unsettled: [],
+        round: 0,
+        image,
+        target,
+        done: 0,
+    };
     dispatchRefine();
 }
 
 function dispatchRefine() {
-    const { pass, bands, samples, pixels } = job.refine;
+    const { pass, bands, samples, pixels, round } = job.refine;
     job.refine.done = 0;
     const task = {
         generation,
@@ -344,6 +370,7 @@ function dispatchRefine() {
         normal: state.shading === 'normal',
         palette: state.palette,
         bands,
+        round,
     };
     if (job.onGpu) {
         gpu.worker.postMessage({ ...task, pixels });
@@ -357,18 +384,52 @@ function dispatchRefine() {
     dispatch();
 }
 
+// Blends each round's colors into a running average in linear light
 function drawPixels({ first, pixels: colors }) {
-    const { pass, pixels, image, target } = job.refine;
+    const refine = job.refine;
+    const { pixels, slots, sums, weights, image } = refine;
+    const weight = refine.samples * refine.samples;
     const count = colors.length / 4;
     for (let i = 0; i < count; i++) {
-        image.data.set(colors.subarray(i * 4, i * 4 + 4), pixels[first + i] * 4);
+        const slot = slots[first + i];
+        const at = pixels[first + i] * 4;
+        weights[slot] += weight;
+        let change = 0;
+        for (let c = 0; c < 3; c++) {
+            sums[slot * 3 + c] += TO_LINEAR[colors[i * 4 + c]] * weight;
+            const value = toSrgb(sums[slot * 3 + c] / weights[slot]);
+            change += Math.abs(value - image.data[at + c]);
+            image.data[at + c] = value;
+        }
+        if (change > SETTLED) refine.unsettled.push(slot);
     }
     const top = Math.floor(pixels[first] / job.width);
     const bottom = Math.floor(pixels[first + count - 1] / job.width) + 1;
-    target.putImageData(image, 0, 0, 0, top, job.width, bottom - top);
-    job.refine.done += count;
-    if (job.refine.done === pixels.length) finishPass(pass);
+    refine.target.putImageData(image, 0, 0, 0, top, job.width, bottom - top);
+    refine.done += count;
+    if (refine.done === pixels.length) finishRound();
     updateStatus();
+}
+
+// Keeps adding points to unsettled pixels of the view on screen until they settle
+function finishRound() {
+    const refine = job.refine;
+    if (refine.round === 0) {
+        finishPass(refine.pass);
+    } else {
+        keepRendered(state.view);
+    }
+    const more = refine.pass === 'full' && $('refine-idle').checked
+        && refine.round + 1 < MAX_REFINE_ROUNDS && refine.unsettled.length;
+    if (!more) {
+        refine.finished = true;
+        return;
+    }
+    refine.round++;
+    refine.slots = Uint32Array.from(refine.unsettled).sort();
+    refine.pixels = refine.slots.map((slot) => refine.all[slot]);
+    refine.unsettled = [];
+    dispatchRefine();
 }
 
 function finishExport() {
@@ -616,7 +677,8 @@ function updateStatus() {
     } else if (job.elapsed === undefined) {
         status.textContent = `${job.refine ? 'Smoothing' : 'Rendering'}… ${percent}%`;
     } else {
-        status.textContent = `${seconds} on ${device}`;
+        const refining = job.refine && !job.refine.finished ? ' · refining' : '';
+        status.textContent = `${seconds} on ${device}${refining}`;
     }
 }
 
@@ -774,6 +836,16 @@ function setupControls() {
             localStorage.setItem('antialias', antialias.value);
         } catch {}
         render();
+    });
+    const refineIdle = $('refine-idle');
+    try {
+        refineIdle.checked = localStorage.getItem('refine-idle') !== 'false';
+    } catch {}
+    refineIdle.addEventListener('change', () => {
+        try {
+            localStorage.setItem('refine-idle', String(refineIdle.checked));
+        } catch {}
+        if (refineIdle.checked) render();
     });
     $('zoom-out').addEventListener('click', () => navigate(zoomAt(canvas.width / 2, canvas.height / 2, 1 / CLICK_ZOOM)));
     $('reset').addEventListener('click', () => {
