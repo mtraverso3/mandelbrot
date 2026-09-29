@@ -41,12 +41,6 @@ fn options(
     }
 }
 
-/// Centers each pixel's grid of points on the pixel.
-fn center_samples(renderer: Renderer, samples: u32) -> Renderer {
-    let offset = (samples as f64 - 1.0) / 2.0;
-    renderer.shifted(-offset, -offset)
-}
-
 /// Bands to carry on from, or none (NaN) to choose them afresh.
 fn bands(scale: f64, phase: f64) -> Option<ColorBands> {
     (!scale.is_nan()).then_some(ColorBands { scale, phase })
@@ -64,7 +58,6 @@ pub fn render_rows_rgba(
     zoom: f64,
     width: u32,
     height: u32,
-    samples: u32,
     max_iterations: u32,
     normal_shading: bool,
     palette: &str,
@@ -74,30 +67,59 @@ pub fn render_rows_rgba(
     band_phase: f64,
 ) -> Result<Vec<u8>, JsError> {
     let view = viewport(center_x, center_y, zoom)?;
-    let samples = samples.max(1);
-    let opts = options(
-        width * samples,
-        height * samples,
-        max_iterations,
-        normal_shading,
-        palette,
-    );
+    let opts = options(width, height, max_iterations, normal_shading, palette);
     LAST.with_borrow_mut(|last| {
-        let renderer = center_samples(
-            Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase)),
-            samples,
-        );
+        let renderer =
+            Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase));
         let row_count = row_count.min(height.saturating_sub(first_row));
-        let mut rgb = vec![0; opts.width as usize * (row_count * samples) as usize * 3];
-        renderer.render_rows(first_row * samples, &mut rgb);
+        let mut rgb = vec![0; width as usize * row_count as usize * 3];
+        renderer.render_rows(first_row, &mut rgb);
         *last = Some(renderer);
-        Ok(supersample::downsample(
-            &rgb,
+
+        let (pixels, _) = rgb.as_chunks::<3>();
+        Ok(pixels
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, 255])
+            .collect())
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen(js_name = renderPixels)]
+pub fn render_pixels(
+    center_x: &str,
+    center_y: &str,
+    zoom: f64,
+    width: u32,
+    height: u32,
+    samples: u32,
+    max_iterations: u32,
+    normal_shading: bool,
+    palette: &str,
+    pixels: Vec<u32>,
+    band_scale: f64,
+    band_phase: f64,
+) -> Result<Vec<u8>, JsError> {
+    let view = viewport(center_x, center_y, zoom)?;
+    let opts = options(width, height, max_iterations, normal_shading, palette);
+    let samples = samples.max(1);
+    LAST.with_borrow_mut(|last| {
+        let renderer =
+            Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase));
+        let points: Vec<_> = supersample::points(&pixels, width, samples).collect();
+        let colors = renderer.render_points(&points).concat();
+        *last = Some(renderer);
+        Ok(supersample::average(
+            &colors,
             3,
-            width as usize,
-            samples as usize,
+            (samples * samples) as usize,
         ))
     })
+}
+
+#[wasm_bindgen(js_name = refinePixels)]
+pub fn refine_pixels(rgba: &[u8], width: u32, height: u32) -> Vec<u32> {
+    supersample::refine_pixels(rgba, width, height)
 }
 
 /// `[scale, phase]` of the color bands `renderRows` last used.

@@ -21,6 +21,7 @@ struct Params {
     band_phase: f32,
     pixel_mantissa: f32,
     pixel_exponent: i32,
+    use_points: u32,
     // The main cardioid's and period-2 bulb's equations expanded around the view's center,
     // so each pixel only adds small terms in its offset: see `in_main_cardioid_or_bulb`
     cardioid: vec4<f32>,
@@ -85,6 +86,7 @@ const UNDECIDED: u32 = 0xfffffffeu;
 @group(0) @binding(6) var<storage, read_write> unfinished: atomic<u32>;
 // RGBA8
 @group(0) @binding(7) var<storage, read_write> pixels: array<u32>;
+@group(0) @binding(8) var<storage, read> points: array<vec2<f32>>;
 
 fn mul(a: vec2<f32>, b: vec2<f32>) -> vec2<f32> {
     return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);

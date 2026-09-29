@@ -164,6 +164,44 @@ fn bands_and_slices_match_a_single_dispatch() {
     );
 }
 
+#[test]
+fn points_on_the_grid_match_the_render() {
+    let gpu = GpuRenderer::new().unwrap();
+    for zoom in [150.0, 1e12] {
+        let opts = RenderOptions {
+            width: 37,
+            height: 23,
+            max_iterations: 400,
+            shading: Shading::Normal,
+            palette: Palette::Classic,
+        };
+        let view = Viewport {
+            zoom,
+            ..preset("spirals").unwrap()
+        };
+        let renderer = Renderer::new(&view, &opts);
+        let whole = gpu.render(&view, &opts).unwrap();
+        let points: Vec<[f32; 2]> = (0..23 * 37)
+            .rev()
+            .map(|i| [(i % 37) as f32, (i / 37) as f32])
+            .collect();
+        let mut colors = vec![0; points.len() * 4];
+        let finished = pollster::block_on(gpu.render_points(
+            &renderer,
+            points.iter().copied(),
+            || false,
+            |start, rgba| colors[start * 4..][..rgba.len()].copy_from_slice(rgba),
+        ));
+        assert!(finished.unwrap());
+        let rgb: Vec<u8> = colors
+            .chunks_exact(4)
+            .rev()
+            .flat_map(|rgba| rgba[..3].to_vec())
+            .collect();
+        assert_eq!(rgb, whole.into_raw(), "zoom {zoom}");
+    }
+}
+
 fn misiurewicz_i(zoom: f64) -> Viewport {
     Viewport {
         center_x: "0".parse().unwrap(),
