@@ -193,10 +193,11 @@ fn points_on_the_grid_match_the_render() {
             |start, rgba| colors[start * 4..][..rgba.len()].copy_from_slice(rgba),
         ));
         assert!(finished.unwrap());
-        let rgb: Vec<u8> = colors
-            .chunks_exact(4)
+        let (pixels, _) = colors.as_chunks::<4>();
+        let rgb: Vec<u8> = pixels
+            .iter()
             .rev()
-            .flat_map(|rgba| rgba[..3].to_vec())
+            .flat_map(|&[r, g, b, _]| [r, g, b])
             .collect();
         assert_eq!(rgb, whole.into_raw(), "zoom {zoom}");
     }
