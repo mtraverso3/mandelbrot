@@ -15,6 +15,7 @@ Interactive web explorer at: https://mandelbrot.mtraverso.net/
 - Preset locations or custom coordinates
 - Deep zoom down to 10²⁵⁰, using perturbation theory past the limits of 64-bit floats
 - Automatic iteration limits, normal-map or flat shading, and optional antialiasing
+- Color palettes: classic, fire, ocean, mono and sunset
 - GPU rendering with [wgpu](https://wgpu.rs), natively and through WebGPU in the browser
 
 ## Installation
@@ -37,11 +38,14 @@ mandelbrot custom -x -0.75 -y 0.0 -z 1.0
 mandelbrot custom -x -1.24949889563508492587065068503213228909045011806661 \
     -y 0.03033300303590165779311010118330780526875599532123 -z 4.7e16 --iterations auto
 
+# In another palette
+mandelbrot --palette sunset preset -l spirals
+
 # On the GPU
 mandelbrot --gpu preset -l spirals
 ```
 
-Run `mandelbrot --help` for all options, including image size, shading and timing output.
+Run `mandelbrot --help` for all options, including image size, shading, palette and timing output.
 
 ## How It Works
 Deep views are rendered with perturbation theory: one reference orbit is computed at high

@@ -4,11 +4,11 @@ mod buffers;
 #[cfg(test)]
 mod tests;
 
-use crate::ReferenceOrbit;
 use crate::render::{
     MAX_AUTO_ITERATIONS, PERTURBATION_ZOOM, PROBE_COLUMNS, RenderOptions, Renderer, Shading,
     UNDECIDED_FRACTION, Viewport, probe_rows,
 };
+use crate::{Palette, ReferenceOrbit};
 use buffers::{Buffers, Params, Sample};
 use std::fmt;
 use std::sync::{Arc, OnceLock};
@@ -236,6 +236,7 @@ impl GpuRenderer {
                 height: rows as u32,
                 max_iterations: limit,
                 shading: Shading::Flat,
+                palette: Palette::Classic,
             };
             let renderer = Renderer::unprobed(view, &opts);
             let variant = Variant {

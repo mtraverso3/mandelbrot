@@ -2,6 +2,7 @@
 
 use super::GpuRenderer;
 use crate::ReferenceOrbit;
+use crate::color::PALETTE_SIZE;
 use crate::perturbation::{fixed_to_f64, precision_bits};
 use crate::render::{PERTURBATION_ZOOM, Renderer, Shading, Viewport};
 use bytemuck::{Pod, Zeroable};
@@ -10,7 +11,6 @@ use wgpu::util::DeviceExt;
 
 /// Size of `State` in the shader.
 const STATE_SIZE: usize = 72;
-const PALETTE_SIZE: f64 = 16.0;
 const ITERATION_BLOCK: f64 = 4096.0;
 
 #[repr(C)]
@@ -39,6 +39,7 @@ pub(super) struct Params {
     _padding: [u32; 3],
     cardioid: [f32; 4],
     bulb: [f32; 4],
+    palette: [[f32; 4]; PALETTE_SIZE],
 }
 
 impl Params {
@@ -70,13 +71,17 @@ impl Params {
             normal_shading: (opts.shading == Shading::Normal) as u32,
             light: [light.0 as f32, light.1 as f32],
             inv_band_scale: (1.0 / band_scale) as f32,
-            band_cycle: (ITERATION_BLOCK / band_scale).rem_euclid(PALETTE_SIZE) as f32,
-            band_phase: band_phase.rem_euclid(PALETTE_SIZE) as f32,
+            band_cycle: (ITERATION_BLOCK / band_scale).rem_euclid(PALETTE_SIZE as f64) as f32,
+            band_phase: band_phase.rem_euclid(PALETTE_SIZE as f64) as f32,
             pixel_mantissa,
             pixel_exponent,
             _padding: [0; 3],
             cardioid,
             bulb,
+            palette: opts
+                .palette
+                .colors()
+                .map(|[r, g, b]| [r as f32, g as f32, b as f32, 0.0]),
         }
     }
 }
