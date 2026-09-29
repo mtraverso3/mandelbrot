@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790664940239,
+  "lastUpdate": 1790665911618,
   "repoUrl": "https://github.com/mtraverso3/mandelbrot",
   "entries": {
     "Mandelbrot benchmarks": [
@@ -2380,6 +2380,128 @@ window.BENCHMARK_DATA = {
             "range": "± 1.04",
             "unit": "ms",
             "extra": "1024x820 view, chose 384000 iterations; min 109.86 ms, max 112.95 ms, 9 samples; AMD EPYC 9V74 80-Core Processor"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "committer": {
+            "email": "marcostraverso2003@gmail.com",
+            "name": "Marcos Traverso",
+            "username": "mtraverso3"
+          },
+          "distinct": true,
+          "id": "f30e2f690e8b46622785fa1913caefb971225a33",
+          "message": "Add color palettes to the CLI and web viewer",
+          "timestamp": "2026-09-29T02:09:00-05:00",
+          "tree_id": "52193f61058f623a43ea123e1c64162327c4e4b2",
+          "url": "https://github.com/mtraverso3/mandelbrot/commit/f30e2f690e8b46622785fa1913caefb971225a33"
+        },
+        "date": 1790665910486,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "render/mandelbrot/normal",
+            "value": 57.88,
+            "range": "± 5.16",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 56.76 ms, max 79.26 ms, 17 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/flat",
+            "value": 45.9,
+            "range": "± 7.43",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 41.96 ms, max 66.12 ms, 21 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/normal",
+            "value": 793.57,
+            "range": "± 2.28",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 791.06 ms, max 797.87 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mini-mandelbrot/flat",
+            "value": 605.09,
+            "range": "± 1.75",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 603.95 ms, max 608.25 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/spirals/normal",
+            "value": 738.99,
+            "range": "± 7.7",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 737.43 ms, max 758.04 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/quad-spiral/normal",
+            "value": 502.06,
+            "range": "± 5.82",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 4 threads; min 501.57 ms, max 516.40 ms, 5 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/1-thread",
+            "value": 125.15,
+            "range": "± 0.5",
+            "unit": "ms",
+            "extra": "1024x820, 1500 iterations, 1 threads; min 124.92 ms, max 126.46 ms, 8 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/mandelbrot/normal/full-res",
+            "value": 711.65,
+            "range": "± 0.99",
+            "unit": "ms",
+            "extra": "4096x3280, 1500 iterations, 4 threads; min 711.54 ms, max 713.70 ms, 3 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/deep-seahorse/normal",
+            "value": 714.68,
+            "range": "± 7.6",
+            "unit": "ms",
+            "extra": "320x256, 30000 iterations, 4 threads; min 704.26 ms, max 722.82 ms, 3 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "render/misiurewicz-1e100/normal",
+            "value": 147.9,
+            "range": "± 1.24",
+            "unit": "ms",
+            "extra": "1024x820, 3000 iterations, 4 threads; min 147.21 ms, max 150.65 ms, 7 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "encode/png/full-res",
+            "value": 54.48,
+            "range": "± 0.55",
+            "unit": "ms",
+            "extra": "4096x3280, 5369 KiB; min 54.35 ms, max 56.66 ms, 19 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "downsample/lanczos3/full-res",
+            "value": 58.69,
+            "range": "± 0.64",
+            "unit": "ms",
+            "extra": "4096x3280 -> 2048x1640; min 58.34 ms, max 60.65 ms, 17 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "auto-iterations/mini-mandelbrot",
+            "value": 34.54,
+            "range": "± 0.46",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 96000 iterations; min 33.72 ms, max 35.46 ms, 29 samples; AMD EPYC 7763 64-Core Processor"
+          },
+          {
+            "name": "auto-iterations/deep-seahorse",
+            "value": 114.33,
+            "range": "± 0.56",
+            "unit": "ms",
+            "extra": "1024x820 view, chose 384000 iterations; min 113.94 ms, max 115.61 ms, 9 samples; AMD EPYC 7763 64-Core Processor"
           }
         ]
       }
