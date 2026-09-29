@@ -97,6 +97,7 @@ pub fn render_pixels(
     normal_shading: bool,
     palette: &str,
     pixels: Vec<u32>,
+    round: u32,
     band_scale: f64,
     band_phase: f64,
 ) -> Result<Vec<u8>, JsError> {
@@ -106,7 +107,7 @@ pub fn render_pixels(
     LAST.with_borrow_mut(|last| {
         let renderer =
             Renderer::continuing(&view, &opts, last.as_ref(), bands(band_scale, band_phase));
-        let points: Vec<_> = supersample::points(&pixels, width, samples).collect();
+        let points: Vec<_> = supersample::points(&pixels, width, samples, round).collect();
         let colors = renderer.render_points(&points).concat();
         *last = Some(renderer);
         Ok(supersample::average(

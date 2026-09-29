@@ -41,18 +41,32 @@ pub fn points(
     pixels: &[u32],
     width: u32,
     samples: u32,
+    round: u32,
 ) -> impl ExactSizeIterator<Item = [f32; 2]> + '_ {
     let per_pixel = (samples * samples) as usize;
     let step = 1.0 / samples as f32;
     (0..pixels.len() * per_pixel).map(move |k| {
         let pixel = pixels[k / per_pixel];
         let point = (k % per_pixel) as u32;
-        let offset = |i: u32| (i as f32 + 0.5) * step - 0.5;
+        let [u, v] = cell_position(pixel, round);
+        let offset = |i: u32, within: f32| (i as f32 + within) * step - 0.5;
         [
-            (pixel % width) as f32 + offset(point % samples),
-            (pixel / width) as f32 + offset(point / samples),
+            (pixel % width) as f32 + offset(point % samples, u),
+            (pixel / width) as f32 + offset(point / samples, v),
         ]
     })
+}
+
+/// Cell centers in round 0, then an R2 low-discrepancy sequence started per pixel.
+fn cell_position(pixel: u32, round: u32) -> [f32; 2] {
+    const R2: [f32; 2] = [0.754_877_7, 0.569_840_3];
+    if round == 0 {
+        return [0.5, 0.5];
+    }
+    let hash = pixel.wrapping_mul(0x9e37_79b9) ^ (pixel >> 16);
+    let hash = hash.wrapping_mul(0x85eb_ca6b);
+    let start = [(hash >> 16) as f32, (hash & 0xffff) as f32].map(|h| h / 65536.0);
+    [0, 1].map(|i| (0.5 + start[i] + R2[i] * round as f32).fract())
 }
 
 pub fn average(colors: &[u8], channels: usize, count: usize) -> Vec<u8> {
@@ -126,7 +140,7 @@ mod tests {
 
     #[test]
     fn points_cover_each_pixel_evenly() {
-        let grid: Vec<_> = points(&[0, 7], 5, 2).collect();
+        let grid: Vec<_> = points(&[0, 7], 5, 2, 0).collect();
         assert_eq!(
             grid,
             [
@@ -140,8 +154,21 @@ mod tests {
                 [2.25, 1.25],
             ]
         );
-        let centered: Vec<_> = points(&[7], 5, 1).collect();
+        let centered: Vec<_> = points(&[7], 5, 1, 0).collect();
         assert_eq!(centered, [[2.0, 1.0]]);
+    }
+
+    #[test]
+    fn later_rounds_move_points_within_their_cells() {
+        let first: Vec<_> = points(&[7, 8], 5, 2, 0).collect();
+        for round in 1..20 {
+            let later: Vec<_> = points(&[7, 8], 5, 2, round).collect();
+            for (a, b) in first.iter().zip(&later) {
+                assert_ne!(a, b, "round {round}");
+                assert!((0..2).all(|i| (a[i] - b[i]).abs() < 0.25), "round {round}");
+            }
+            assert_ne!(later[0][0] - first[0][0], later[4][0] - first[4][0]);
+        }
     }
 
     #[test]

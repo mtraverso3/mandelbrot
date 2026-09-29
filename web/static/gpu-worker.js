@@ -31,7 +31,7 @@ self.onmessage = async ({ data: job }) => {
                 view.x, view.y, view.zoom,
                 job.width, job.height, job.samples, iterations, normal, palette,
                 bands[0], bands[1],
-                job.pixels,
+                job.pixels, job.round,
                 (first, pixels) => self.postMessage({ kind: 'pixels', generation, first, pixels }, [pixels.buffer]),
             );
             return;

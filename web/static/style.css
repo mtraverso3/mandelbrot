@@ -81,7 +81,7 @@ label {
     gap: 4px;
 }
 
-.iterations {
+.with-checkbox {
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 8px;

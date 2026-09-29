@@ -131,6 +131,7 @@ impl GpuViewer {
         band_scale: f64,
         band_phase: f64,
         pixels: Vec<u32>,
+        round: u32,
         on_pixels: js_sys::Function,
     ) -> Result<js_sys::Promise, JsError> {
         let bands = bands(band_scale, band_phase);
@@ -149,7 +150,7 @@ impl GpuViewer {
                 .gpu
                 .render_points(
                     &renderer,
-                    supersample::points(&pixels, width, samples),
+                    supersample::points(&pixels, width, samples, round),
                     || inner.generation.get() != generation,
                     |_, rgba| {
                         pending.extend_from_slice(rgba);
